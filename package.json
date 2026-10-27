@@ -1,0 +1,8 @@
+{
+  "name": "adl-risk-simulator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --input-type=module -e \"import('./test/simulator.test.mjs')\""
+  }
+}

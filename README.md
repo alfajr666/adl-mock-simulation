@@ -1,127 +1,60 @@
-# ⚡ Auto-Deleveraging (ADL) Mock Simulation System v2.1
+# Auto-Deleveraging: Who Bears the Loss When Liquidations Fail?
 
-**Portfolio Project by Gilang Fajar Wijayanto**  
-Senior Treasury & Finance Operations Specialist | CFA Level I | FRM Part I  
-[delomite.com](https://delomite.com) | [LinkedIn](https://www.linkedin.com/in/gilang-fajar-6973119a/)
+An interactive, deterministic educational simulator for a single linear USDT-margined perpetual market.
 
----
+This project shows how a liquidation shortfall moves through three layers:
 
-## 📋 Overview
+1. The default trader's collateral.
+2. The insurance fund.
+3. Settlement with an opposing position through the modeled ADL queue.
 
-This repository demonstrates an interactive, educational simulation engine modeling the mechanics, flaws, and mathematical imperatives of Auto-Deleveraging (ADL) on cryptocurrency perpetual futures exchanges. 
+The default walkthrough uses a small, reproducible example: a 100 USDT deficit is split into a 40 USDT insurance contribution and a 60 USDT ADL settlement adjustment. The app exposes the accounting ledger, affected quantities, position equity, and two allocation policies on identical inputs.
 
-The model visualizes how a severe black swan liquidation cascade burns through a crypto exchange's insurance fund, triggering the ADL risk engine as a structural last resort to prevent systemic insolvency. 
+## Run locally
 
-The architecture features a decoupled **Vanilla HTML/JS Frontend** backed by a **zero-dependency Python server** implementing a strict state-machine simulation. It exposes the critical flaws in legacy ADL formulas (like those used by Binance and Bybit) by proving how their heuristics mis-rank systemic risk, penalizing retail traders while protecting high-risk whales.
+The public simulator is browser-only. No Python service, market API, account connection, package install, or network access is required.
 
-**[Live Dashboard →](#)** *(Local deployment via `app.py`)*
-
-### Business Context
-In crypto derivatives, when a losing trader's position is liquidated and their margin cannot cover the closing cost, the exchange's insurance fund absorbs the debt. If the insurance fund depletes to zero, the exchange MUST fire the ADL engine, forcibly closing the most profitable opposing traders to cover the bad debt. Understanding this mechanism is vital for risk operations, treasury management, and institutional portfolio hedging.
-
-### Key Features
-- ✅ **Live Market Polling**: Streams real-time prices for BTC, ETH, and SOL directly from Binance Futures via a background thread.
-- ✅ **Tabbed Architecture**: Clean separation between the macro Exchange POV (engine view) and the micro User POV (retail impact).
-- ✅ **The Ranking Flaw Proof**: Visually proves the mathematical failure of the Legacy `PnL% × EffLev` formula vs the mathematically correct `EffLev only` (QFEX) methodology.
-- ✅ **Archetype Portfolios**: Tracks 3 retail archetypes (Conservative, Leveraged, Aggressive) dynamically as the cascade hits.
-- ✅ **Asymmetric Settlement Logic**: Correctly implements dual-price settlement (`bankruptPrice` vs `currentMarkPrice`) to ensure the exchange only absorbs the true mathematical loss gap.
-
----
-
-## 📊 Simulation Mechanics & Entities
-
-| Archetype | Leverage | Position Size (USD) | Side | Description |
-|-----------|----------|---------------------|------|-------------|
-| **Conservative** | 2× | 2,000 | Long | Low leverage, modest capital, risk‑averse. Survives most market moves unless an extreme ADL cascade occurs. |
-| **Leveraged** | 10× | 5,000 | Long | Medium leverage. Gains more on moderate moves but is vulnerable to >50% shocks. |
-| **Aggressive** | 50× | 10,000 | Long | High leverage, large position. Wiped out almost instantly on a crash. |
-
-### Trader Universe (Order Book)
-| ID | Trader Name | Type | Currency | Initial Setup |
-|----|-------------|------|----------|---------------|
-| `T1` | whale_btc | Whale Long | BTCUSDT | High size, low risk |
-| `T7` | perp_newbie | Retail Long | BTCUSDT | Small size, high PnL% |
-| `T4` | hedger_pro | Institutional Short | BTCUSDT | Massive size, low risk |
-| `T5` | short_squeeze | Degenerate Short | BTCUSDT | High leverage, doomed |
-
----
-
-## 🗂️ Project Structure
-
-```
-adl-mock/
-├── app.py              # Zero-dependency Python backend (http.server + background state threads)
-├── index.html          # Web frontend styled with premium dark terminal theme (Tabbed layout)
-├── agent.md            # LLM Agent instructions for running and maintaining this simulator
-└── README.md           # Project documentation (this file)
+```sh
+python3 -m http.server 8000
 ```
 
----
+Open `http://localhost:8000/` and choose a scenario. The Python `app.py` file is retained as the historical prototype; it is not the public runtime or a second source of financial truth.
 
-## 🚀 Getting Started
+Opening `index.html` directly with a `file://` URL will show the page shell but browsers block the module import, so the controls cannot run. Use the HTTP command above; the page also shows an inline diagnostic when its engine cannot load.
 
-### 1. Requirements
-- Python 3.8+ (No external dependencies required)
-- A modern web browser
+## Scenarios
 
-### 2. Run the Engine
-```bash
-python3 app.py
+- **Partial insurance** — the guided default: 100 deficit, 40 insurance, 60 ADL.
+- **Sufficient insurance** — the deficit is fully funded, so ADL does not fire.
+- **No insurance** — the complete deficit is allocated through bankruptcy-price settlement.
+- **Long default** — the mirrored falling-market example.
+- **Policy comparison** — reference profit-weighted ranking versus leverage-only ranking on the same snapshot.
+- **Insufficient capacity** — a named synthetic capacity limit leaves a visible unresolved deficit.
+
+## Scope and assumptions
+
+The release models one market, one designated default, isolated single-position accounts, a constant maintenance rate, zero fees and funding, a frozen mark per run, and a fully paired synthetic opening book. It does not reproduce a production exchange's queue, cross-margin account, tiered maintenance, order-book execution, or venue-specific trigger. Exchange documentation is used as a reference for terminology and selected ranking/settlement descriptions; the project's policy comparison is explicitly experimental.
+
+The tool never presents a result as a live exchange rank, a trading signal, or a guarantee of safety. Amounts are exact internally and rounded only for display.
+
+## Validation
+
+Run the deterministic financial fixtures with:
+
+```sh
+npm test
 ```
 
-### 3. Launch Dashboard
-Open your browser and navigate to:
-```
-http://localhost:8000
-```
-*Note: On the Exchange Tab, click **Trigger Liquidation**, wait for the event log to settle, click **Drain Fund**, and finally click **Fire ADL**. Switch between tabs to see how the system reacts!*
+The tests cover the insurance waterfall, long/short symmetry, policy comparison, unresolved capacity, replay determinism, and the healthy-account guard. The specification and acceptance matrix live in Delomite at `docs/adl-simulator/`.
 
----
+## Files
 
-## 📈 Business Logic & Methodology
+- `simulator.js` — exact-rational financial engine, state transitions, ledger events, invariants, and view model.
+- `index.html` — accessible browser walkthrough and presentation layer.
+- `test/simulator.test.mjs` — deterministic expected-value checks.
+- `agent.md` — historical prototype maintenance notes; the browser engine supersedes its server instructions for the public release.
+- `ADL_Mock_System_Brief*.md` — historical briefs retained for provenance.
 
-### Asymmetric Settlement Pricing
-The simulator proves why an exchange MUST use two different settlement prices when ADL fires:
-- **The Loser (Liquidated Position)** is closed at the `bankruptPrice` (the exact price where their equity hits 0).
-- **The Winner (ALP Position)** is closed at the `currentMarkPrice` (realizing their fair value profit).
-Using asymmetric pricing ensures the exchange only absorbs the true loss gap (`|bankruptPrice - currentMarkPrice| × qty`). Forcing both to close at the same price creates massive synthetic math errors that break the exchange's balance sheet.
+This is an independent educational simulation. It does not represent an exchange's internal state or a production risk engine.
 
-### The Ranking Flaw (Legacy vs QFEX)
-Most legacy exchanges use a heuristic formula for ADL priority:
-`ADL Priority = PnL% × Effective Leverage`
-The simulator actively exposes the flaw in this formula: **Profit magnitude distorts systemic risk.** A small `$8,000` position can rank higher in the queue than a massive `$500,000` whale simply because it has a higher unrealized PnL percentage.
-
-The **QFEX Method** solves this by ranking *solely* on `Effective Leverage`. ADL's core goal is systemic de-risking; therefore, positions with the highest effective leverage (highest risk contribution) must be closed first.
-
----
-
-## 🎯 Use Cases
-- **Risk Officers**: Quantifying exchange insolvency risks during black swan tail events.
-- **Treasury Managers**: Understanding ADL risks when deploying house capital into Delta-Neutral strategies on perpetual DEXs.
-- **Retail Traders**: Utilizing the Personal Position Calculator to audit live queue exposure and pip rankings.
-- **Protocol Designers**: Proving the mathematical superiority of `Effective Leverage` based scoring over heuristic PnL% formulas.
-
----
-
-## ⚠️ Design Decisions & Limitations
-- **Mocked Volatility**: Real exchanges do not instantly step from 0 to 100% loss. The simulator uses a strict state machine (`INIT` → `LIQUIDATED` → `FUND DEPLETED` → `ADL FIRED`) to freeze the frame and let users inspect the math at each critical juncture.
-- **Zero-Dependency Core**: Built purely in Python `http.server` and Vanilla JS to guarantee long-term stability without NPM rot or package deprecation.
-
----
-
-## 🤝 Contact
-**Gilang Fajar Wijayanto**  
-Senior Treasury & Finance Operations Specialist  
-📧 gilang.f@delomite.com  
-🌐 [delomite.com](https://delomite.com)  
-💼 [LinkedIn](https://www.linkedin.com/in/gilang-fajar-6973119a/)
-
-**Certifications:**
-- CFA Level I
-- FRM Part I
-- WMI & WPPE (OJK Indonesia)
-
----
-
-**Built with:** Python, Vanilla JS, CSS3, HTML5  
-**Designed for:** Exchange Risk Operations, Institutional Hedging, Quantitative Education
+The **Export run** control downloads the current scenario, model version, policy, exact event postings, invariant results, and rounded presentation values as a human-readable JSON file. The export contains only synthetic scenario data.

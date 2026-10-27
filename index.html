@@ -1,691 +1,435 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ADL Mock System v2.1</title>
-  
-  <!-- Google Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-  
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An interactive, deterministic simulation of liquidation shortfalls, insurance coverage, and auto-deleveraging settlement.">
+  <title>Auto-Deleveraging — Who Bears the Loss?</title>
   <style>
     :root {
-      --bg:       #070b14;
-      --surface:  #0d1420;
-      --surface2: #131c2e;
-      --border:   #1e2d45;
-      --text:     #e2eaf7;
-      --muted:    #5a7299;
-      --accent:   #f7a928;
-      --red:      #f03e3e;
-      --green:    #22d17a;
-      --blue:     #3d8ef0;
-      --purple:   #9b6dff;
+      --ink: #e9edf3;
+      --muted: #8b99aa;
+      --faint: #5d6a78;
+      --bg: #080b10;
+      --panel: #0e131a;
+      --panel-2: #151c25;
+      --line: #283340;
+      --blue: #65a9ff;
+      --amber: #f4b860;
+      --red: #ff746b;
+      --green: #66d5a0;
+      --violet: #b5a1ff;
+      --radius: 12px;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .24);
     }
-
     * { box-sizing: border-box; }
-    
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: 'Space Grotesk', sans-serif;
-      margin: 0;
-      padding: 0;
-      line-height: 1.5;
+    html { background: var(--bg); }
+    body { margin: 0; color: var(--ink); background: radial-gradient(circle at 80% -10%, #182130 0, transparent 35rem), var(--bg); font: 16px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    button, select { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+    .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 70px; }
+    .topline { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; border-bottom: 1px solid var(--line); padding-bottom: 22px; }
+    .eyebrow { color: var(--amber); font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; }
+    h1, h2, h3 { margin: 0; letter-spacing: -.035em; line-height: 1.08; }
+    h1 { max-width: 720px; margin-top: 14px; font-size: clamp(2.25rem, 5vw, 4.8rem); }
+    h2 { font-size: clamp(1.45rem, 2.5vw, 2rem); }
+    h3 { font-size: 1.05rem; }
+    p { margin: 0; }
+    .dek { max-width: 680px; margin-top: 18px; color: var(--muted); font-size: 1.08rem; }
+    .badge { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 99px; padding: 7px 11px; color: var(--muted); font-size: .77rem; white-space: nowrap; }
+    .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .notice { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin: 22px 0 28px; border: 1px solid #384354; border-radius: var(--radius); padding: 14px 16px; background: rgba(14, 19, 26, .8); color: var(--muted); font-size: .9rem; }
+    .notice strong { color: var(--ink); }
+    .controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: 10px; align-items: end; margin: 18px 0 16px; }
+    label { display: grid; gap: 6px; color: var(--muted); font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    select { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); color: var(--ink); padding: 0 12px; }
+    .button { min-height: 44px; border: 1px solid var(--line); border-radius: 9px; padding: 0 15px; color: var(--ink); background: var(--panel-2); transition: transform .16s ease, border-color .16s ease, background .16s ease; }
+    .button:hover:not(:disabled) { transform: translateY(-1px); border-color: #506074; background: #1c2632; }
+    .button:active:not(:disabled) { transform: translateY(1px) scale(.985); }
+    .button:disabled { cursor: not-allowed; opacity: .38; }
+    .button.primary { border-color: var(--amber); color: #17120a; background: var(--amber); font-weight: 800; }
+    .button.ghost { background: transparent; }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 24px 0; }
+    .metric { min-height: 108px; border: 1px solid var(--line); border-radius: var(--radius); padding: 15px; background: linear-gradient(145deg, rgba(21, 28, 37, .9), rgba(14, 19, 26, .92)); }
+    .metric .label { color: var(--muted); font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .metric .value { margin-top: 10px; font: 700 clamp(1.3rem, 2vw, 1.8rem)/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .metric.red .value { color: var(--red); }
+    .metric.blue .value { color: var(--blue); }
+    .metric.amber .value { color: var(--amber); }
+    .metric.green .value { color: var(--green); }
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0 30px; }
+    .flow-step { position: relative; min-height: 100px; border-top: 2px solid var(--line); padding: 12px 2px 0; }
+    .flow-step:not(:last-child)::after { content: "→"; position: absolute; top: 8px; right: 8px; color: var(--faint); }
+    .flow-step .kicker { color: var(--faint); font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .flow-step .amount { margin-top: 11px; font: 700 1.45rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .flow-step p { margin-top: 8px; color: var(--muted); font-size: .83rem; }
+    .flow-step.insurance { border-color: var(--blue); }
+    .flow-step.insurance .amount { color: var(--blue); }
+    .flow-step.adl { border-color: var(--amber); }
+    .flow-step.adl .amount { color: var(--amber); }
+    .flow-step.residual { border-color: var(--red); }
+    .flow-step.residual .amount { color: var(--red); }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 16px; }
+    .panel { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(14, 19, 26, .88); box-shadow: var(--shadow); overflow: hidden; }
+    .panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 17px 18px 14px; border-bottom: 1px solid var(--line); }
+    .panel-head span { color: var(--faint); font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .panel-body { padding: 18px; }
+    .story { min-height: 150px; }
+    .story .stage { color: var(--amber); font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    .story h2 { margin-top: 10px; }
+    .story p { max-width: 68ch; margin-top: 12px; color: var(--muted); }
+    .story .source { margin-top: 16px; color: var(--faint); font-size: .78rem; }
+    .story .source a { color: var(--blue); }
+    .event-list { display: grid; gap: 8px; max-height: 214px; overflow: auto; }
+    .event { border-left: 2px solid var(--line); padding: 7px 0 7px 11px; }
+    .event.current { border-color: var(--amber); background: linear-gradient(90deg, rgba(244, 184, 96, .08), transparent); }
+    .event strong { font-size: .88rem; }
+    .event small { display: block; margin-top: 3px; color: var(--muted); font-size: .78rem; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 650px; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    th { color: var(--faint); text-align: left; font: 700 10px/1.2 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr[data-id] { cursor: pointer; }
+    tbody tr[data-id]:hover { background: rgba(101, 169, 255, .07); }
+    .side-long, .positive { color: var(--green); }
+    .side-short, .negative { color: var(--red); }
+    .muted { color: var(--muted); }
+    .warning { color: var(--amber); }
+    .status { display: inline-flex; border-radius: 5px; padding: 3px 6px; background: var(--panel-2); color: var(--muted); font-size: 10px; }
+    .status.DEFAULTED, .status.UNRESOLVED, .status.BLOCKED { color: var(--red); }
+    .status.CLOSED, .status.RESOLVED { color: var(--green); }
+    details { border-top: 1px solid var(--line); }
+    details:first-child { border-top: 0; }
+    summary { cursor: pointer; padding: 13px 0; color: var(--ink); font-weight: 700; }
+    .ledger-row { display: grid; grid-template-columns: 90px 1fr auto; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(40, 51, 64, .7); color: var(--muted); font-size: .82rem; }
+    .ledger-row code { color: var(--blue); font: inherit; }
+    .inspector { min-height: 160px; }
+    .inspector-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 18px; margin-top: 14px; }
+    .inspector-grid div { display: grid; gap: 3px; }
+    .inspector-grid dt { color: var(--faint); font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .inspector-grid dd { margin: 0; font: 700 .9rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .comparison { margin-top: 16px; }
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .compare-col { border: 1px solid var(--line); border-radius: 9px; padding: 14px; background: var(--panel); }
+    .compare-col h3 { color: var(--amber); }
+    .compare-col dl { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 14px 0 0; font-size: .82rem; }
+    .compare-col dt { color: var(--muted); }
+    .compare-col dd { margin: 0; font: 700 .82rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .fineprint { margin-top: 30px; color: var(--faint); font-size: .8rem; }
+    .fineprint a { color: var(--blue); }
+    .fallback { margin: 22px 0; border: 1px solid var(--amber); border-radius: var(--radius); padding: 18px; background: rgba(244, 184, 96, .08); }
+    .fallback h2 { font-size: 1.15rem; }
+    .fallback p { margin-top: 8px; color: var(--muted); }
+    .runtime-warning { margin: 18px 0; border: 1px solid var(--red); border-radius: var(--radius); padding: 15px 16px; background: rgba(255, 116, 107, .08); color: var(--muted); }
+    .runtime-warning strong { color: var(--red); }
+    .runtime-warning code { color: var(--ink); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    @media (max-width: 840px) {
+      .topline { display: block; }
+      .badge { margin-top: 18px; }
+      .controls { grid-template-columns: 1fr 1fr; }
+      .controls label { grid-column: 1 / -1; }
+      .summary { grid-template-columns: repeat(2, 1fr); }
+      .grid { grid-template-columns: 1fr; }
     }
-    
-    .mono { font-family: 'Space Mono', monospace; }
-    
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 20px;
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 22px, 1180px); padding-top: 22px; }
+      .notice { display: block; }
+      .notice .button { margin-top: 12px; }
+      .controls { grid-template-columns: 1fr 1fr; }
+      .controls .button { width: 100%; padding: 0 8px; }
+      .summary { gap: 7px; }
+      .metric { min-height: 94px; padding: 11px; }
+      .metric .value { font-size: 1.18rem; }
+      .flow { grid-template-columns: 1fr 1fr; gap: 12px; }
+      .flow-step:not(:last-child)::after { display: none; }
+      .panel-body { padding: 14px; }
+      .compare-grid { grid-template-columns: 1fr; }
     }
-
-    h1, h2, h3, h4 { font-weight: 700; margin-top: 0; }
-    h2 { font-size: 1.4rem; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 16px; margin-top: 40px; }
-    
-    .text-red { color: var(--red); }
-    .text-green { color: var(--green); }
-    .text-blue { color: var(--blue); }
-    .text-purple { color: var(--purple); }
-    .text-accent { color: var(--accent); }
-    .text-muted { color: var(--muted); }
-    
-    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-    
-    /* Header */
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .header h1 { margin: 0; font-size: 1.5rem; display: flex; align-items: center; gap: 10px; }
-    .live-badge { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--green); border: 1px solid var(--green); padding: 4px 10px; border-radius: 12px; }
-    .pulse-dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 1.5s infinite; }
-    @keyframes pulse { 0% { transform: scale(0.95); opacity: 1; } 50% { transform: scale(1.2); opacity: 0.5; } 100% { transform: scale(0.95); opacity: 1; } }
-
-    /* Market Bar */
-    .market-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 30px; }
-    .ticker-card { background: var(--surface2); padding: 12px; border-radius: 6px; border: 1px solid var(--border); }
-    .ticker-label { font-size: 0.8rem; color: var(--muted); font-weight: bold; }
-    .ticker-price { font-size: 1.2rem; margin: 4px 0; }
-    .ticker-change { font-size: 0.85rem; }
-
-    /* Tabs */
-    .tabs { display: flex; gap: 10px; border-bottom: 2px solid var(--border); margin-bottom: 30px; }
-    .tab-btn { 
-      background: none; border: none; color: var(--muted); font-family: 'Space Grotesk', sans-serif;
-      font-size: 1.1rem; font-weight: bold; padding: 10px 20px; cursor: pointer;
-      border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s;
-    }
-    .tab-btn:hover { color: var(--text); }
-    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-    
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-
-    /* Grid Layouts */
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
-
-    /* Sections */
-    .explainer-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin-top: 16px; }
-    .explainer-box pre { font-family: 'Space Mono', monospace; font-size: 0.85rem; margin: 0; white-space: pre-wrap; color: var(--text); }
-    
-    /* Tables */
-    table { width: 100%; border-collapse: collapse; font-family: 'Space Mono', monospace; font-size: 0.85rem; }
-    th { text-align: left; padding: 10px; color: var(--muted); border-bottom: 1px solid var(--border); font-family: 'Space Grotesk', sans-serif; }
-    td { padding: 10px; border-bottom: 1px solid var(--border); }
-    tr:last-child td { border-bottom: none; }
-    
-    .row-amber { background: rgba(247,169,40,0.1); }
-    .row-red { background: rgba(240,62,62,0.1); }
-    .row-purple { background: rgba(155,109,255,0.1); }
-    .row-social { background: rgba(90,114,153,0.1); }
-    
-    /* Simulator Controls */
-    .control-panel { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
-    button { 
-      background: var(--surface2); color: var(--text); border: 1px solid var(--border);
-      padding: 10px 16px; border-radius: 4px; font-family: 'Space Grotesk', sans-serif; font-weight: 500;
-      cursor: pointer; transition: all 0.2s;
-    }
-    button:hover:not(:disabled) { background: var(--border); }
-    button:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
-    button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
-    button.danger { background: var(--red); color: white; border-color: var(--red); }
-    
-    /* Progress Bar */
-    .fund-bar-container { width: 100%; background: var(--surface2); border-radius: 4px; height: 16px; margin-top: 6px; overflow: hidden; border: 1px solid var(--border); }
-    .fund-bar { height: 100%; transition: width 0.1s linear, background-color 0.3s; }
-    
-    /* Event Log */
-    .event-log { background: #000; border: 1px solid var(--border); border-radius: 6px; max-height: 150px; overflow-y: auto; padding: 10px; font-family: 'Space Mono', monospace; font-size: 11px; margin-top: 10px; }
-    .event-log p { margin: 4px 0; }
-    .log-ok { color: var(--green); }
-    .log-liq { color: var(--red); }
-    .log-adl { color: var(--purple); }
-    .log-ins { color: var(--blue); }
-    .log-warn { color: var(--accent); }
-    .log-muted { color: var(--muted); }
-    
-    /* Pip indicator */
-    .pip-box { font-family: monospace; display: inline-block; min-width: 50px; }
-    
-    /* Method Toggle */
-    .method-toggle { display: inline-flex; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-    .method-toggle span { padding: 6px 12px; font-size: 0.9rem; cursor: pointer; }
-    .method-toggle span.active { background: var(--accent); color: var(--bg); font-weight: bold; }
-    
-    /* Form Inputs */
-    input, select { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 4px; font-family: 'Space Mono', monospace; }
-    
-    @media (max-width: 768px) {
-      .grid-2, .grid-4 { grid-template-columns: 1fr; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
     }
   </style>
 </head>
 <body>
-<div class="container">
-  
-  <!-- HEADER -->
-  <div class="header">
-    <h1>⚡ ADL Engine <span style="font-size: 1rem; color: var(--muted); font-weight: normal; margin-left: 10px;">Auto-Deleveraging for Crypto Perps</span></h1>
-    <div class="live-badge"><div class="pulse-dot"></div> LIVE SIMULATION</div>
-  </div>
-
-  <!-- MARKET BAR -->
-  <div class="market-bar" id="market-bar">
-    <!-- Populated by JS -->
-  </div>
-
-  <!-- TAB NAVIGATION -->
-  <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('exchange')">Exchange POV</button>
-    <button class="tab-btn" onclick="switchTab('user')">User POV</button>
-  </div>
-
-  <!-- ============================================== -->
-  <!-- TAB: EXCHANGE POV -->
-  <!-- ============================================== -->
-  <div id="tab-exchange" class="tab-content active">
-
-    <!-- SECTION 01: WHAT IS ADL -->
-    <h2 style="margin-top:0">[01] WHAT IS ADL</h2>
-    <div class="grid-4">
-      <div class="card">
-        <h4>Tear-Ups (TradFi Origin)</h4>
-        <p class="text-muted" style="font-size:0.9rem">In traditional futures markets, clearing houses use "tear-ups" to forcibly close offsetting positions when a participant can no longer meet obligations. ADL in crypto is the direct structural equivalent — not a punitive measure, but a necessity to prevent continued loss accumulation from an insolvent counterparty.</p>
+  <main class="shell">
+    <header class="topline">
+      <div>
+        <div class="eyebrow">Market structure / settlement mechanics</div>
+        <h1>Who bears the loss when liquidations fail?</h1>
+        <p class="dek">Trace one liquidation shortfall through collateral, insurance, and an opposing position. Every amount is synthetic, frozen, and inspectable.</p>
       </div>
-      <div class="card">
-        <h4>Variation Margin Gains Haircutting</h4>
-        <p class="text-muted" style="font-size:0.9rem">When a loser can't pay, someone must cover the gap. VMGH takes money from winners to cover bad debt. The alternative—requiring FCM brokers to post their own capital—kills leverage products entirely by disincentivizing brokers from offering them.</p>
-      </div>
-      <div class="card">
-        <h4>Insurance Fund: First Line</h4>
-        <p class="text-muted" style="font-size:0.9rem">Exchanges build an insurance fund from liquidation fees. When a position is closed worse than bankruptcy price, the fund absorbs the gap. The vast majority of liquidations never reach ADL. Only when the fund is depleted does the exchange reach into the ALP queue.</p>
-      </div>
-      <div class="card">
-        <h4>ADL: Structural Last Resort</h4>
-        <p class="text-muted" style="font-size:0.9rem">ADL fires only when a position is liquidated AND the insurance fund cannot cover the resulting loss gap. Profitable positions on the opposite side are closed at the bankrupt trader's last positive-equity price. Well-designed ADL aids market stability.</p>
+      <div class="badge" aria-label="Independent simulation with frozen synthetic prices">Independent simulation</div>
+    </header>
+
+    <div class="notice">
+      <div><strong>Model boundary.</strong> One linear USDT-margined market, one designated default, isolated accounts, zero fees, and a fully paired synthetic opening book. This is an educational model, not a live exchange monitor.</div>
+      <div>
+        <a class="button ghost" href="https://delomite.com/work/adl-risk-simulator/" target="_blank" rel="noreferrer">Case study</a>
+        <a class="button ghost" href="https://delomite.com" target="_blank" rel="noreferrer">Delomite</a>
       </div>
     </div>
 
-    <div class="grid-2">
-      <div class="explainer-box">
-  <pre>WHY TWO SETTLEMENT PRICES?
-
-  Liquidated position (loser)  →  closed at bankruptPrice
-    = last mark price where equity was ≥ 0
-    = restores account to zero, no more
-
-  ALP position (winner)  →  closed at currentMarkPrice
-    = converts unrealized PnL to realized at fair value
-    = no haircut beyond what closing the gap requires
-  ─────────────────────────────────────────────
-  Asymmetric (loser at bankruptPrice, winner at currentMarkPrice):
-    The only mathematically correct approach.
-    Exchange absorbs only the true gap: 
-    |bankruptPrice − currentMarkPrice| × qty.</pre>
+    <section aria-labelledby="scenario-heading">
+      <div class="runtime-warning" id="runtime-warning" role="alert" hidden>
+        <strong>Interactive runtime unavailable.</strong>
+        <span>Serve this folder over HTTP so the browser can load the financial engine: <code>python3 -m http.server 8000</code>, then open <code>http://localhost:8000/</code>.</span>
       </div>
-      
-      <div class="explainer-box">
-  <pre>LEGACY HEURISTIC (Binance, Bybit, OKX)
-    ADL Priority = PnL% × Effective Leverage
-    
-    Flaw: profit magnitude distorts ranking independent 
-    of systemic risk. Disproportionately penalizes new traders.
-  ─────────────────────────────────────────────
-  QFEX METHOD (ak0, QFEX design)
-    ADL Priority = Effective Leverage only
-    
-    Logic: ADL's objective is systemic de-risking. 
-    Highest effective leverage = highest contribution to 
-    systemic risk = reduced first. Profit is irrelevant.</pre>
+      <div class="controls">
+        <label id="scenario-heading">Scenario
+          <select id="scenario-select" aria-describedby="scenario-description">
+            <option value="partial">Partial insurance · guided example</option>
+            <option value="sufficient">Insurance covers the loss</option>
+            <option value="none">No insurance available</option>
+            <option value="falling">Falling market · long default</option>
+            <option value="comparison">Compare allocation policies</option>
+            <option value="unresolved">Insufficient ADL capacity</option>
+          </select>
+        </label>
+        <button class="button" id="back-button" type="button">Back</button>
+        <button class="button primary" id="next-button" type="button">Run the example</button>
+        <button class="button" id="reset-button" type="button">Reset</button>
+        <button class="button" id="export-button" type="button">Export run</button>
       </div>
-    </div>
+      <p id="scenario-description" class="muted" aria-live="polite"></p>
+    </section>
 
-    <!-- SECTION 02: THE RANKING FLAW -->
-    <h2>[02] THE RANKING FLAW</h2>
-    <p class="text-muted" style="font-size: 0.9rem;">Observe how the legacy formula distorts priority by factoring in Profit %. A small position can incorrectly rank ahead of a massive position.</p>
-    
-    <div class="card" style="padding: 0; overflow: hidden;">
-      <div class="grid-2" style="gap: 0;">
-        <!-- Legacy Col -->
-        <div style="border-right: 1px solid var(--border);">
-          <div style="padding: 10px; background: var(--surface2); border-bottom: 1px solid var(--border);">
-            <div class="mono" style="color:var(--muted)">LEGACY METHOD</div>
-            <div style="font-size:0.85rem">PnL% × Effective Leverage</div>
-          </div>
-          <table id="table-rank-legacy">
-            <!-- Populated by JS -->
-          </table>
+    <noscript>
+      <section class="fallback" aria-labelledby="fallback-title">
+        <h2 id="fallback-title">JavaScript is required for the walkthrough controls</h2>
+        <p>The worked example remains readable without scripts: a 100.00 USDT liquidation deficit is funded by 40.00 USDT from insurance and a 60.00 USDT bankruptcy-price settlement adjustment. Residual deficit: 0.00 USDT. The interactive queue, inspector, ledger, and comparison require JavaScript.</p>
+      </section>
+    </noscript>
+
+    <section class="summary" aria-label="Settlement summary">
+      <div class="metric red"><div class="label">Liquidation deficit</div><div class="value" id="gross-deficit">Not calculated</div></div>
+      <div class="metric blue"><div class="label">Insurance contribution</div><div class="value" id="fund-contribution">Not calculated</div></div>
+      <div class="metric amber"><div class="label">ADL adjustment</div><div class="value" id="adl-adjustment">Not calculated</div></div>
+      <div class="metric green"><div class="label">Residual deficit</div><div class="value" id="residual-deficit">Not calculated</div></div>
+    </section>
+
+    <section class="flow" aria-label="Loss waterfall">
+      <div class="flow-step"><div class="kicker">01 / Default</div><div class="amount" id="flow-default">—</div><p>Collateral absorbs the first loss.</p></div>
+      <div class="flow-step insurance"><div class="kicker">02 / Insurance</div><div class="amount" id="flow-insurance">—</div><p>Available fund coverage is posted.</p></div>
+      <div class="flow-step adl"><div class="kicker">03 / ADL</div><div class="amount" id="flow-adl">—</div><p>Remaining units settle at bankruptcy price.</p></div>
+      <div class="flow-step residual"><div class="kicker">04 / Residual</div><div class="amount" id="flow-residual">—</div><p>Unresolved capacity stays visible.</p></div>
+    </section>
+
+    <section class="grid">
+      <article class="panel story" aria-labelledby="story-title">
+        <div class="panel-body">
+          <div class="stage" id="stage-label">SETUP</div>
+          <h2 id="story-title">Start with a healthy opening book</h2>
+          <p id="story-text">Press “Run the example” to apply the frozen market shock. The simulator will advance one accounting event at a time.</p>
+          <div class="source">Reference terms: <a href="https://www.binance.com/en/support/faq/detail/360033525471" target="_blank" rel="noreferrer">Binance ADL documentation</a> · <a href="https://www.bybit.com/en/help-center/article/Auto-Deleveraging-ADL" target="_blank" rel="noreferrer">Bybit ADL documentation</a></div>
         </div>
-        <!-- QFEX Col -->
-        <div>
-          <div style="padding: 10px; background: var(--surface2); border-bottom: 1px solid var(--border);">
-            <div class="mono" style="color:var(--muted)">QFEX METHOD</div>
-            <div style="font-size:0.85rem">Effective Leverage only ✓</div>
-          </div>
-          <table id="table-rank-qfex">
-            <!-- Populated by JS -->
-          </table>
-        </div>
+      </article>
+      <article class="panel" aria-labelledby="events-title">
+        <div class="panel-head"><h2 id="events-title">Event history</h2><span id="event-count">0 events</span></div>
+        <div class="panel-body"><div id="event-list" class="event-list" aria-live="polite"></div></div>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top:16px" aria-labelledby="positions-title">
+      <div class="panel-head"><h2 id="positions-title">Position book</h2><span>Click a row to inspect</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Account</th><th>Side</th><th>Remaining</th><th>Entry</th><th>Cash</th><th>PnL</th><th>Equity</th><th>Status</th></tr></thead><tbody id="positions-body"></tbody></table></div>
+    </section>
+
+    <section class="grid" style="margin-top:16px">
+      <article class="panel" aria-labelledby="queue-title">
+        <div class="panel-head"><h2 id="queue-title">Eligible ADL queue</h2><span id="queue-context">Forms after insurance settlement</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Account</th><th>Score</th><th>Eff. leverage</th><th>Equity</th><th>State</th></tr></thead><tbody id="queue-body"></tbody></table></div>
+      </article>
+      <article class="panel inspector" aria-labelledby="inspector-title">
+        <div class="panel-head"><h2 id="inspector-title">Account detail</h2><span id="inspector-label">Designated default</span></div>
+        <div class="panel-body" id="inspector-body"><p class="muted">Select an account in the position book to inspect its equity bridge and settlement state.</p></div>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top:16px" aria-labelledby="ledger-title">
+      <div class="panel-head"><h2 id="ledger-title">Accounting ledger</h2><span id="invariant-label">Awaiting calculation</span></div>
+      <div class="panel-body" id="ledger-body"><p class="muted">The ledger will show paired postings after the first step.</p></div>
+    </section>
+
+    <details class="panel" style="margin-top:16px" aria-labelledby="method-title">
+      <summary style="padding:18px" id="method-title">Methodology and model boundary</summary>
+      <div class="panel-body">
+        <p class="muted">The engine uses exact rational arithmetic for a single paired linear market. Equity is collateral plus signed unrealized PnL at the frozen mark. Insurance pays the calculated deficit first; any remaining quantity settles at the default position's bankruptcy price. The queue is frozen before ADL matching and is ranked by either the reference profit-weighted score or the experimental leverage-only score.</p>
+        <p class="muted" style="margin-top:10px">This release does not infer a live exchange queue, cross-margin risk, order-book execution, fees, funding, or a personal account's safety. Every scenario is synthetic and reproducible.</p>
       </div>
-      <div id="flaw-callout" style="padding: 12px 16px; background: var(--surface2); border-top: 1px solid var(--border); font-size: 0.9rem; color: var(--accent);">
-        <!-- Populated by JS -->
-      </div>
-    </div>
+    </details>
 
-    <!-- SECTION 03: LIVE SIMULATOR -->
-    <h2>[03] LIVE SIMULATOR</h2>
-    
-    <div class="card">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div style="flex: 1;">
-          <div style="display: flex; justify-content: space-between; font-size: 0.9rem;">
-            <span class="mono text-muted">INSURANCE FUND</span>
-            <span class="mono" id="fund-label">$2,400,000 / $2,400,000</span>
-          </div>
-          <div class="fund-bar-container">
-            <div id="fund-bar" class="fund-bar" style="width: 100%; background-color: var(--blue);"></div>
-          </div>
-        </div>
-        <div style="margin-left: 30px;">
-          <div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 4px;">Ranking method for ADL fire:</div>
-          <div class="method-toggle">
-            <span id="toggle-legacy" onclick="toggleMethod('Legacy')">Legacy</span>
-            <span id="toggle-qfex" onclick="toggleMethod('QFEX')" class="active">QFEX ✓</span>
-          </div>
-        </div>
-      </div>
+    <section class="panel comparison" id="comparison-panel" aria-labelledby="comparison-title" hidden>
+      <div class="panel-head"><h2 id="comparison-title">Same deficit, different allocation</h2><span>Identical snapshot · policy is the only change</span></div>
+      <div class="panel-body"><div class="compare-grid" id="comparison-body"></div></div>
+    </section>
 
-      <div class="control-panel">
-        <button id="btn-liq" class="danger" onclick="apiCall('/api/trigger-liq')">💥 Trigger Liquidation</button>
-        <button id="btn-attack" onclick="apiCall('/api/attack-scenario')">🎭 Run Attack Scenario</button>
-        <button id="btn-drain" class="primary" onclick="apiCall('/api/drain')">🔥 Drain Fund</button>
-        <button id="btn-adl" class="danger" onclick="apiCall('/api/fire-adl')">⚡ Fire ADL</button>
-        <button id="btn-reset" onclick="apiCall('/api/reset')">↺ Reset</button>
-      </div>
-      
-      <div id="gap-indicator" style="display: none; padding: 10px; background: rgba(240,62,62,0.1); border: 1px solid var(--red); color: var(--red); border-radius: 4px; margin-bottom: 10px; font-family: monospace; font-size: 1rem; font-weight: bold;">
-        Gap remaining: $<span id="gap-val">0.00</span>
-      </div>
+    <p class="fineprint">Independent educational simulation · model <span id="model-version"></span> · synthetic positions and frozen marks · <a href="https://delomite.com" target="_blank" rel="noreferrer">Delomite</a></p>
+  </main>
 
-      <div style="overflow-x: auto;">
-        <table id="table-simulator">
-          <thead>
-            <tr>
-              <th>Trader</th>
-              <th>Side</th>
-              <th>Size (USD)</th>
-              <th>Lev</th>
-              <th>Entry</th>
-              <th>Close Price</th>
-              <th>Unrealized PnL</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <!-- Populated by JS -->
-          </tbody>
-        </table>
-      </div>
-      
-      <div class="event-log" id="event-log">
-        <!-- Populated by JS -->
-      </div>
-    </div>
+  <script>
+    window.setTimeout(() => {
+      if (document.documentElement.dataset.adlReady !== 'true') document.getElementById('runtime-warning').hidden = false;
+    }, 900);
+    window.addEventListener('error', () => { document.getElementById('runtime-warning').hidden = false; });
+  </script>
+  <script type="module">
+    import { PRESETS, comparePolicies, createRun, advance, viewModel } from './simulator.js';
 
-    <!-- SECTION 04: ADL QUEUE -->
-    <h2>[04] ADL QUEUE</h2>
-    <div class="grid-2">
-      <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="padding: 10px; background: var(--surface2); border-bottom: 1px solid var(--border); font-weight: bold; color: var(--green);">LONG QUEUE</div>
-        <table id="table-queue-long"></table>
-      </div>
-      <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="padding: 10px; background: var(--surface2); border-bottom: 1px solid var(--border); font-weight: bold; color: var(--red);">SHORT QUEUE</div>
-        <table id="table-queue-short"></table>
-      </div>
-    </div>
-  </div>
+    const $ = (id) => document.getElementById(id);
+    let selectedScenario = 'partial';
+    let policy = 'reference';
+    let steps = 0;
+    let run = createRun(selectedScenario, policy);
+    let selectedId = null;
+    let comparisonVisible = false;
 
-  <!-- ============================================== -->
-  <!-- TAB: USER POV -->
-  <!-- ============================================== -->
-  <div id="tab-user" class="tab-content">
-    
-    <h2 style="margin-top:0">YOUR RETAIL PORTFOLIO</h2>
-    <p class="text-muted" style="font-size: 0.9rem;">This view shows 3 representative retail archetypes. As the exchange macro-engine steps through a liquidation event, you can watch exactly how these individual portfolios are affected (whether they survive, are liquidated, or are caught in the ADL cascade).</p>
+    const money = (value) => value === null || value === undefined ? 'Not calculated' : `${Number(value) < 0 ? '−' : ''}${Math.abs(Number(value)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
+    const qty = (value) => value === null || value === undefined ? '—' : Number(value).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 });
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
+    const stageText = { SETUP: ['Start with a healthy opening book', 'Press “Run the example” to apply the frozen market shock. The simulator will advance one accounting event at a time.'], SHOCKED: ['A single account breaches maintenance', 'The mark crossed the designated account’s maintenance threshold. The next step calculates the actual deficit.'], ASSESSED: ['The shortfall is now measurable', 'Collateral did not cover the default. The engine has separated the insurance-supported tranche from the ADL tranche.'], MARKET_SETTLED: ['Insurance-supported units are settled', 'The fund transfer and market-price matches are committed. Any remaining default quantity is the only quantity eligible for ADL.'], ADL_READY: ['The ADL queue is frozen', 'Accounts are ranked on this exact snapshot. The next step settles only the highest eligible account at the bankruptcy price.'], ADL_IN_PROGRESS: ['ADL settlement is in progress', 'A paired settlement has been posted. Continue to inspect the next match or finish the run.'], RESOLVED: ['The deficit is fully allocated', 'Insurance plus the ADL settlement adjustment equals the original deficit. Remaining open positions stay visible.'], UNRESOLVED: ['Capacity ran out before the deficit did', 'The remaining default quantity and deficit are deliberately left visible. The model does not invent a socialized deduction.'], BLOCKED: ['Settlement paused', 'This input falls outside the one-default scope or violates an accounting invariant.'] };
 
-    <div class="card" style="margin-bottom: 40px; padding: 0; overflow: hidden;">
-      <table id="table-retail">
-        <thead>
-          <tr>
-            <th>Archetype</th>
-            <th>Side</th>
-            <th>Size (USD)</th>
-            <th>Lev</th>
-            <th>Entry</th>
-            <th>Close Price</th>
-            <th>Unrealized PnL</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          <!-- Populated by JS -->
-        </tbody>
-      </table>
-    </div>
-
-    <!-- SECTION 05: PERSONAL POSITION CHECK -->
-    <h2>[05] PERSONAL POSITION CHECK</h2>
-    <div class="card">
-      <h4 style="margin: 0 0 16px 0; color: var(--accent);">CHECK YOUR ADL RISK</h4>
-      <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 15px;">
-        <div><label class="text-muted mono" style="font-size:0.8rem; display:block;">Pair</label>
-        <select id="risk-pair"><option value="BTCUSDT">BTC/USDT</option><option value="ETHUSDT">ETH/USDT</option><option value="SOLUSDT">SOL/USDT</option></select></div>
-        
-        <div><label class="text-muted mono" style="font-size:0.8rem; display:block;">Side</label>
-        <select id="risk-side"><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select></div>
-        
-        <div><label class="text-muted mono" style="font-size:0.8rem; display:block;">Entry (USDT)</label>
-        <input type="number" id="risk-entry" value="62000"></div>
-        
-        <div><label class="text-muted mono" style="font-size:0.8rem; display:block;">Size (USD)</label>
-        <input type="number" id="risk-size" value="10000"></div>
-        
-        <div><label class="text-muted mono" style="font-size:0.8rem; display:block;">Leverage (x)</label>
-        <input type="number" id="risk-lev" value="10"></div>
-      </div>
-      <button class="primary" onclick="checkPersonalRisk()">Calculate ADL Score</button>
-      
-      <div id="risk-output" class="explainer-box" style="display: none;"></div>
-    </div>
-
-    <!-- SECTION 06: KEY CONCEPTS -->
-    <h2>[06] KEY CONCEPTS</h2>
-    <div class="grid-4">
-      <div class="card"><div class="mono text-muted" style="font-size:0.8rem; margin-bottom:8px;">01</div><h4 style="margin-bottom:4px;">ADL Indicator</h4><p style="font-size:0.85rem; margin:0; color:var(--muted)">The 5-pip queue indicator represents your priority bracket on the exchange. 5 pips = you are first to be closed.</p></div>
-      <div class="card"><div class="mono text-muted" style="font-size:0.8rem; margin-bottom:8px;">02</div><h4 style="margin-bottom:4px;">Lower Leverage = Lower Risk</h4><p style="font-size:0.85rem; margin:0; color:var(--muted)">Under correctly designed ADL engines (QFEX), maintaining low effective leverage guarantees safety.</p></div>
-      <div class="card"><div class="mono text-muted" style="font-size:0.8rem; margin-bottom:8px;">03</div><h4 style="margin-bottom:4px;">Take Partial Profits</h4><p style="font-size:0.85rem; margin:0; color:var(--muted)">Because unrealized profits act as equity, realizing gains resets your effective leverage and drops you down the queue.</p></div>
-      <div class="card"><div class="mono text-muted" style="font-size:0.8rem; margin-bottom:8px;">04</div><h4 style="margin-bottom:4px;">High Risk Periods</h4><p style="font-size:0.85rem; margin:0; color:var(--muted)">ADL only happens when the insurance fund depletes. Monitor the fund size during black swan volatility events.</p></div>
-    </div>
-  </div>
-  
-  <div style="margin-top: 50px; text-align: center; color: var(--muted); font-size: 0.8rem;" class="mono">
-    ADL Engine Simulation v2.1 • Built for Educational Purposes
-  </div>
-</div>
-
-<script>
-  let lastLogCount = 0;
-  
-  function switchTab(tabId) {
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-    
-    document.getElementById('tab-' + tabId).classList.add('active');
-    event.currentTarget.classList.add('active');
-  }
-
-  function fmt(num) {
-    if (num == null) return "---";
-    return num.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  }
-
-  function apiCall(endpoint) {
-    fetch(endpoint, { method: 'POST', headers: {'Content-Type': 'application/json'} });
-  }
-
-  function toggleMethod(method) {
-    fetch('/api/toggle-method', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({method}) });
-  }
-
-  async function checkPersonalRisk() {
-    const symbol = document.getElementById('risk-pair').value;
-    const side = document.getElementById('risk-side').value;
-    const entry = document.getElementById('risk-entry').value;
-    const size = document.getElementById('risk-size').value;
-    const lev = document.getElementById('risk-lev').value;
-    
-    const res = await fetch('/api/calculate-personal', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({symbol, side, entry, size, leverage: lev})
-    });
-    const data = await res.json();
-    
-    const out = document.getElementById('risk-output');
-    out.style.display = 'block';
-    
-    if (data.error) {
-      out.innerHTML = `<span class="text-red">Error: ${data.error}</span>`;
-      return;
+    function rebuild() {
+      run = createRun(selectedScenario, policy);
+      for (let index = 0; index < steps; index += 1) advance(run);
+      render();
     }
-    
-    if (!data.inProfit) {
-      out.innerHTML = `<pre>✅ SAFE — Position is not in profit. No ADL exposure under either method.</pre>`;
-      return;
+
+    function updateScenario() {
+      selectedScenario = $('scenario-select').value;
+      policy = selectedScenario === 'comparison' ? 'reference' : policy;
+      steps = 0; selectedId = null; comparisonVisible = false; rebuild();
     }
-    
-    const getRiskLabel = (pips) => {
-      if(pips===5) return '🔴 CRITICAL  — First in queue. ADL fires on you first.';
-      if(pips===4) return '🟠 HIGH      — Top 20% of queue.';
-      if(pips===3) return '🟡 MODERATE  — Mid-queue.';
-      if(pips===2) return '🟢 LOW       — Lower half of queue.';
-      if(pips===1) return '✅ MINIMAL   — Very low ADL risk.';
-      return '✅ SAFE';
-    };
-    
-    const block = (p) => '█'.repeat(p) + '░'.repeat(5-p);
-    
-    const diff = data.pips_legacy - data.pips_qfex;
-    const diffStr = diff > 0 ? `↓ ${diff} rank(s) safer under QFEX method` : 
-                    diff < 0 ? `↑ ${Math.abs(diff)} rank(s) riskier under QFEX method` :
-                    `= Same risk tier across both methods`;
 
-    out.innerHTML = `<pre>──────────────────────────────────────────
-  YOUR POSITION vs. CURRENT BOOK
-──────────────────────────────────────────
+    function renderSummary(model) {
+      const values = model.deficit;
+      $('gross-deficit').textContent = values.gross === '0.00' && model.stage === 'SETUP' ? 'Not calculated' : money(values.gross);
+      $('fund-contribution').textContent = model.stage === 'SETUP' ? 'Not calculated' : money(model.fund.contribution);
+      $('adl-adjustment').textContent = model.stage === 'SETUP' ? 'Not calculated' : money(values.adjustment);
+      $('residual-deficit').textContent = model.stage === 'SETUP' ? 'Not calculated' : money(values.remaining);
+      $('flow-default').textContent = model.stage === 'SETUP' ? '—' : money(values.gross);
+      $('flow-insurance').textContent = model.stage === 'SETUP' ? '—' : money(model.fund.contribution);
+      $('flow-adl').textContent = model.stage === 'SETUP' ? '—' : money(values.adjustment);
+      $('flow-residual').textContent = model.stage === 'SETUP' ? '—' : money(values.remaining);
+    }
 
-  Unrealized PnL:    +$${fmt(data.pnl)}  (+${fmt(data.pnlPct)}%)
-  Effective Lev:     ${fmt(data.effectiveLev)}x
+    function renderStory(model) {
+      const [title, description] = stageText[model.stage] || stageText.BLOCKED;
+      $('stage-label').textContent = model.stage.replace('_', ' ');
+      $('story-title').textContent = title;
+      $('story-text').textContent = model.blockedReason || description;
+      $('scenario-description').textContent = PRESETS[selectedScenario].description;
+      $('next-button').textContent = model.stage === 'SETUP' ? 'Run the example' : model.stage === 'RESOLVED' || model.stage === 'UNRESOLVED' || model.stage === 'BLOCKED' ? 'Finished' : 'Next step';
+      $('next-button').disabled = ['RESOLVED', 'UNRESOLVED', 'BLOCKED'].includes(model.stage);
+      $('back-button').disabled = steps === 0;
+      $('event-count').textContent = `${model.events.length} event${model.events.length === 1 ? '' : 's'}`;
+    }
 
-  LEGACY METHOD (Binance/Bybit)
-  ADL Score:   ${fmt(data.adlScore_legacy)}
-  Queue Rank:  ${block(data.pips_legacy)}  (${data.pips_legacy}/5)
-  Risk:        ${getRiskLabel(data.pips_legacy)}
+    function renderEvents(model) {
+      $('event-list').innerHTML = model.events.length ? model.events.map((event, index) => `<div class="event ${index === model.events.length - 1 ? 'current' : ''}"><strong>${escapeHtml(event.title)}</strong><small>${escapeHtml(event.detail)}</small></div>`).join('') : '<p class="muted">No financial event has been committed.</p>';
+    }
 
-  QFEX METHOD
-  ADL Score:   ${fmt(data.adlScore_qfex)}x eff. lev
-  Queue Rank:  ${block(data.pips_qfex)}  (${data.pips_qfex}/5)
-  Risk:        ${getRiskLabel(data.pips_qfex)}
+    function renderPositions(model) {
+      $('positions-body').innerHTML = model.positions.map((pos) => `<tr data-id="${escapeHtml(pos.id)}"><td>${escapeHtml(pos.label)}</td><td class="${pos.side === 'LONG' ? 'side-long' : 'side-short'}">${pos.side}</td><td>${qty(pos.quantity)}</td><td>${money(pos.entry)}</td><td>${money(pos.cash)}</td><td class="${Number(pos.pnl) >= 0 ? 'positive' : 'negative'}">${money(pos.pnl)}</td><td class="${Number(pos.equity) >= 0 ? 'positive' : 'negative'}">${money(pos.equity)}</td><td><span class="status ${escapeHtml(pos.status)}">${escapeHtml(pos.status)}</span></td></tr>`).join('');
+    }
 
-  ${diffStr}
-──────────────────────────────────────────</pre>`;
-  }
-
-  function renderPipBox(pips) {
-    if (pips === 0) return `<span class="pip-box text-muted">░░░░░</span>`;
-    return `<span class="pip-box text-accent">${'█'.repeat(pips)}${'░'.repeat(5-pips)}</span>`;
-  }
-  
-  function generatePositionTableRows(positions) {
-    let html = '';
-    positions.forEach(p => {
-      let rowCls = '';
-      if (p.status === 'LIQUIDATED') rowCls = 'row-red';
-      else if (p.status === 'FORCE_CLOSED') rowCls = 'row-purple';
-      else if (p.status === 'SOCIALIZED') rowCls = 'row-social';
-      
-      let pnlStr = `<span class="${p.pnl >= 0 ? 'text-green' : 'text-red'}">${p.pnl > 0 ? '+' : ''}$${fmt(p.pnl)}</span>`;
-      if (p.status === 'SOCIALIZED') pnlStr += `<br><span class="text-muted" style="font-size:0.8rem">Ded: -$${fmt(p.socializedDeduction)}</span>`;
-      
-      html += `<tr class="${rowCls}">
-        <td>${p.name}</td>
-        <td class="${p.side==='LONG'?'text-green':'text-red'}">${p.side}</td>
-        <td>$${fmt(p.sizeUSD)}</td>
-        <td>${p.lev}x</td>
-        <td>$${fmt(p.entryPrice)}</td>
-        <td>${p.closePrice ? '$'+fmt(p.closePrice) : '---'}</td>
-        <td>${pnlStr}</td>
-        <td>${p.status}</td>
-      </tr>`;
-    });
-    return html;
-  }
-
-  function fetchStatus() {
-    fetch('/api/status').then(r => r.json()).then(state => {
-      // Buttons state
-      const s = state.simStep;
-      document.getElementById('btn-liq').disabled = s !== 0;
-      document.getElementById('btn-attack').disabled = s !== 0;
-      document.getElementById('btn-drain').disabled = s !== 1;
-      document.getElementById('btn-adl').disabled = s !== 2;
-      
-      // Method Toggle
-      if(state.activeMethod === 'Legacy') {
-        document.getElementById('toggle-legacy').classList.add('active');
-        document.getElementById('toggle-legacy').innerHTML = 'Legacy ✓';
-        document.getElementById('toggle-qfex').classList.remove('active');
-        document.getElementById('toggle-qfex').innerHTML = 'QFEX';
-      } else {
-        document.getElementById('toggle-qfex').classList.add('active');
-        document.getElementById('toggle-qfex').innerHTML = 'QFEX ✓';
-        document.getElementById('toggle-legacy').classList.remove('active');
-        document.getElementById('toggle-legacy').innerHTML = 'Legacy';
-      }
-      
-      // Market Bar
-      let mbHTML = '';
-      for (const [sym, price] of Object.entries(state.prices)) {
-        const chg = state.priceChanges[sym];
-        const colorClass = chg >= 0 ? 'text-green' : 'text-red';
-        const sign = chg > 0 ? '+' : '';
-        mbHTML += `
-          <div class="ticker-card">
-            <div class="ticker-label">${sym.replace('USDT', '/USDT')}</div>
-            <div class="ticker-price mono">$${fmt(price)}</div>
-            <div class="ticker-change mono ${colorClass}">${sign}${chg.toFixed(2)}%</div>
-          </div>
-        `;
-      }
-      mbHTML += `
-        <div class="ticker-card">
-          <div class="ticker-label">BTC Funding</div>
-          <div class="ticker-price mono">${state.fundingRate > 0 ? '+' : ''}${state.fundingRate.toFixed(4)}%</div>
-          <div class="ticker-change mono text-muted">Next 8h</div>
-        </div>`;
-      document.getElementById('market-bar').innerHTML = mbHTML;
-
-      // Insurance Fund
-      const maxFund = 2400000;
-      const pct = (state.insuranceFund / maxFund) * 100;
-      document.getElementById('fund-label').innerText = `$${fmt(state.insuranceFund)} / $${fmt(maxFund)}`;
-      const bar = document.getElementById('fund-bar');
-      bar.style.width = pct + '%';
-      if (pct > 60) bar.style.backgroundColor = 'var(--blue)';
-      else if (pct > 20) bar.style.backgroundColor = 'var(--accent)';
-      else bar.style.backgroundColor = 'var(--red)';
-      
-      if (pct === 0) document.getElementById('fund-label').innerHTML = `<span class="text-red" style="animation: pulse 1s infinite">DEPLETED — ADL ARMED</span>`;
-
-      // Gap Indicator
-      const gapBox = document.getElementById('gap-indicator');
-      if (state.simStep >= 3 && state.gapRemaining > 0) {
-        gapBox.style.display = 'block';
-        document.getElementById('gap-val').innerText = fmt(state.gapRemaining);
-      } else {
-        gapBox.style.display = 'none';
-      }
-
-      // Filter Exchange vs Retail
-      const exchangePos = state.positions.filter(p => !p.isRetail);
-      const retailPos = state.positions.filter(p => p.isRetail);
-
-      // Positions (Section 03) - Exchange POV
-      document.getElementById('table-simulator').innerHTML = generatePositionTableRows(exchangePos);
-      
-      // Retail Portfolio - User POV
-      document.getElementById('table-retail').innerHTML = generatePositionTableRows(retailPos);
-
-      // Ranking Flaw Dual Table (Section 02)
-      // Only longs from exchangePos
-      let longs = exchangePos.filter(p => p.side === 'LONG' && p.pnl > 0 && p.status === 'OPEN');
-      let sortedLegacy = [...longs].sort((a,b) => b.adlScore_legacy - a.adlScore_legacy);
-      let sortedQFEX = [...longs].sort((a,b) => b.adlScore_qfex - a.adlScore_qfex);
-      
-      let tLeg = '', tQfex = '';
-      let misrankedId = null;
-      let legacyRankMis = 0;
-      let qfexRankMis = 0;
-      let misrankedName = '';
-      
-      // Find misrank (newbie above whale in legacy, below in qfex)
-      const newbieL = sortedLegacy.findIndex(p => p.id === 'T7');
-      const whaleL = sortedLegacy.findIndex(p => p.id === 'T1');
-      const newbieQ = sortedQFEX.findIndex(p => p.id === 'T7');
-      const whaleQ = sortedQFEX.findIndex(p => p.id === 'T1');
-      
-      if (newbieL !== -1 && whaleL !== -1 && newbieL < whaleL && newbieQ > whaleQ) {
-        misrankedId = 'T7';
-        legacyRankMis = newbieL + 1;
-        qfexRankMis = newbieQ + 1;
-        misrankedName = 'perp_newbie';
-      }
-
-      sortedLegacy.forEach((p, idx) => {
-        const isMis = p.id === misrankedId;
-        tLeg += `<tr class="${isMis ? 'row-amber' : ''}">
-          <td style="width: 30px">#${idx+1}</td>
-          <td>${p.name}</td>
-          <td>${fmt(p.adlScore_legacy)} ${isMis ? '<span class="text-accent">⚠</span>' : ''}</td>
-        </tr>`;
-      });
-      document.getElementById('table-rank-legacy').innerHTML = tLeg;
-
-      sortedQFEX.forEach((p, idx) => {
-        const isMis = p.id === misrankedId;
-        tQfex += `<tr class="${isMis ? 'row-amber' : ''}">
-          <td style="width: 30px">#${idx+1}</td>
-          <td>${p.name}</td>
-          <td>${fmt(p.adlScore_qfex)}x</td>
-        </tr>`;
-      });
-      document.getElementById('table-rank-qfex').innerHTML = tQfex;
-      
-      if (misrankedId) {
-        document.getElementById('flaw-callout').innerHTML = `⚠ <b>${misrankedName}</b> ranks <b>#${legacyRankMis}</b> under legacy, above larger positions, despite lower effective leverage. QFEX correctly drops them to <b>#${qfexRankMis}</b>.`;
-      } else {
-        document.getElementById('flaw-callout').innerHTML = `All ranks are currently stable based on market prices. Wait for volatility to observe the flaw.`;
-      }
-
-      // ADL Queues (Section 04) - Using exchangePos
-      const renderQueue = (side) => {
-        let q = exchangePos.filter(p => p.side === side && p.status === 'OPEN');
-        if (state.activeMethod === 'Legacy') q.sort((a,b) => b.adlScore_legacy - a.adlScore_legacy);
-        else q.sort((a,b) => b.adlScore_qfex - a.adlScore_qfex);
-        
-        let html = '<tr><th>Trader</th><th>Eff. Lev</th><th>Score (Active)</th><th>Pips</th></tr>';
-        q.forEach((p, idx) => {
-          if (p.pnl <= 0) return;
-          const score = state.activeMethod === 'Legacy' ? p.adlScore_legacy : p.adlScore_qfex;
-          const pips = state.activeMethod === 'Legacy' ? p.pips_legacy : p.pips_qfex;
-          const icon = idx === 0 ? ' <span class="text-accent">⚡</span>' : '';
-          html += `<tr>
-            <td>#${idx+1} ${p.name}${icon}</td>
-            <td>${fmt(p.effectiveLev)}x</td>
-            <td>${fmt(score)}</td>
-            <td>${renderPipBox(pips)}</td>
-          </tr>`;
-        });
-        return html;
+    function renderQueue(model) {
+      const queueReady = ['ADL_READY', 'ADL_IN_PROGRESS', 'RESOLVED', 'UNRESOLVED'].includes(model.stage);
+      const queueContext = {
+        SETUP: 'Forms after a default is assessed',
+        SHOCKED: 'Forms after the deficit is assessed',
+        ASSESSED: 'Forms after the insurance tranche settles',
+        MARKET_SETTLED: 'Preview · ranking freezes next',
+        ADL_READY: 'Frozen ranking · select a row',
+        ADL_IN_PROGRESS: 'Frozen ranking · matching next account',
+        RESOLVED: 'Frozen ranking · run complete',
+        UNRESOLVED: 'Frozen ranking · capacity exhausted',
       };
-      
-      document.getElementById('table-queue-long').innerHTML = renderQueue('LONG');
-      document.getElementById('table-queue-short').innerHTML = renderQueue('SHORT');
-
-      // Logs
-      if (state.logs.length > lastLogCount) {
-        const logBox = document.getElementById('event-log');
-        for (let i = lastLogCount; i < state.logs.length; i++) {
-          const l = state.logs[i];
-          logBox.innerHTML += `<p><span class="text-muted">[${l.time}]</span> <span class="log-${l.type}">${l.message}</span></p>`;
+      $('queue-context').textContent = queueContext[model.stage] || 'Model scope boundary';
+      if (!queueReady) {
+        if (model.stage === 'MARKET_SETTLED' && model.queue.length) {
+          $('queue-body').innerHTML = model.queue.map((candidate) => `<tr data-id="${escapeHtml(candidate.id)}"><td>—</td><td>${escapeHtml(candidate.label)}</td><td>${candidate.score ?? '—'}</td><td>${candidate.leverage ?? '—'}×</td><td>${money(candidate.equity)}</td><td>Pending freeze</td></tr>`).join('');
+        } else {
+          $('queue-body').innerHTML = `<tr><td colspan="6" class="muted">${queueContext[model.stage] || 'Queue is not available at this step.'}.</td></tr>`;
         }
-        logBox.scrollTop = logBox.scrollHeight;
-        lastLogCount = state.logs.length;
+        return;
       }
-      
-      if (state.logs.length < lastLogCount) {
-        document.getElementById('event-log').innerHTML = '';
-        lastLogCount = 0;
-      }
-    });
-  }
+      $('queue-body').innerHTML = model.queue.length ? model.queue.map((candidate) => `<tr data-id="${escapeHtml(candidate.id)}"><td>#${candidate.rank}</td><td>${escapeHtml(candidate.label)}</td><td>${candidate.score ?? '—'}</td><td>${candidate.leverage ?? '—'}×</td><td>${money(candidate.equity)}</td><td>${candidate.quantity === '0.000000' ? 'Matched' : 'Eligible'}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">No eligible simulated accounts remain.</td></tr>';
+    }
 
-  setInterval(fetchStatus, 1000);
-  fetchStatus();
-</script>
+    function renderInspector(model) {
+      const position = model.positions.find((item) => item.id === selectedId);
+      if (!position) { $('inspector-label').textContent = 'Select a position'; $('inspector-body').innerHTML = '<p class="muted">Select an account in the position book to inspect its equity bridge and settlement state.</p>'; return; }
+      const queueEntry = model.queue.find((candidate) => candidate.id === position.id);
+      const context = position.id === 'D' ? 'Designated default' : queueEntry ? `Rank ${queueEntry.rank} of ${model.queue.length} eligible simulated accounts` : 'Outside the current ADL queue';
+      $('inspector-label').textContent = context;
+      $('inspector-body').innerHTML = `<p class="muted">${context}. Values below use the frozen ${money(model.mark)} scenario mark.</p><dl class="inspector-grid"><div><dt>Side</dt><dd class="${position.side === 'LONG' ? 'side-long' : 'side-short'}">${position.side}</dd></div><div><dt>Status</dt><dd>${position.status}</dd></div><div><dt>Entry price</dt><dd>${money(position.entry)}</dd></div><div><dt>Remaining quantity</dt><dd>${qty(position.quantity)}</dd></div><div><dt>Matched quantity</dt><dd>${qty(position.matchedQuantity)}</dd></div><div><dt>Cash / realized</dt><dd>${money(position.cash)} / ${money(position.realized)}</dd></div><div><dt>Unrealized PnL</dt><dd class="${Number(position.pnl) >= 0 ? 'positive' : 'negative'}">${money(position.pnl)}</dd></div><div><dt>Equity</dt><dd>${money(position.equity)}</dd></div><div><dt>Maintenance</dt><dd>${money(position.maintenance)}</dd></div><div><dt>Effective leverage</dt><dd>${position.leverage ? `${position.leverage}×` : 'Not eligible'}</dd></div></dl>`;
+    }
+
+    function renderLedger(model) {
+      $('invariant-label').textContent = model.invariant.ok ? `Balanced · ${model.invariant.equityTotal} USDT resources` : `Blocked · ${model.invariant.issues.join(' ')}`;
+      const rows = model.events.flatMap((event) => (event.postings || []).map((posting) => `<div class="ledger-row"><code>#${escapeHtml(event.id)}</code><span>${escapeHtml(event.title)} · ${escapeHtml(posting.account)}</span><strong>${posting.cashDelta ? escapeHtml(posting.cashDelta.n ? `${posting.cashDelta.n}/${posting.cashDelta.d}` : posting.cashDelta) : '—'}</strong></div>`));
+      const emptyMessage = model.stage === 'SETUP'
+        ? 'No financial event has been committed. Run the example to create the first snapshot.'
+        : 'No cash postings are required at this step. Shock and deficit assessment are recorded in Event history; paired postings begin with the insurance step.';
+      $('ledger-body').innerHTML = rows.length ? `<details open><summary>Paired postings (${rows.length})</summary>${rows.join('')}</details><details><summary>Invariant detail</summary><p class="muted">${model.invariant.ok ? 'Account equity plus fund cash equals opening resources. Remaining signed quantity is balanced.' : model.invariant.issues.join(' ')}</p></details>` : `<p class="muted">${emptyMessage}</p>`;
+    }
+
+    function renderComparison() {
+      const comparison = comparePolicies('comparison');
+      const columns = [['Profit-weighted reference', comparison.reference], ['Leverage-only experimental', comparison.leverage]];
+      $('comparison-body').innerHTML = columns.map(([label, run]) => {
+        const model = viewModel(run);
+        const adlMatches = model.events.filter((event) => event.type === 'ADL').map((event) => event.title.replace(' matched ', ': ')).join(' · ') || 'No ADL match required.';
+        const candidates = model.positions.filter((position) => ['A', 'B', 'C'].includes(position.id)).map((position) => `${position.id} ${position.quantity} units / ${money(position.equity)}`).join(' · ');
+        const order = model.events.find((event) => event.type === 'ADL_READY')?.detail || 'Queue is not required.';
+        return `<div class="compare-col"><h3>${label}</h3><dl><dt>Final status</dt><dd>${model.stage}</dd><dt>Gross deficit</dt><dd>${money(model.deficit.gross)}</dd><dt>Insurance</dt><dd>${money(model.fund.contribution)}</dd><dt>ADL adjustment</dt><dd>${money(model.deficit.adjustment)}</dd><dt>Residual</dt><dd>${money(model.deficit.remaining)}</dd><dt>Frozen queue</dt><dd>${escapeHtml(order)}</dd><dt>Matches</dt><dd>${escapeHtml(adlMatches)}</dd><dt>Candidate outcome</dt><dd>${escapeHtml(candidates)}</dd><dt>Invariant</dt><dd>${model.invariant.ok ? 'Balanced' : 'Failed'}</dd></dl></div>`;
+      }).join('');
+      $('comparison-panel').hidden = false;
+    }
+
+    function exportRun() {
+      const model = viewModel(run);
+      const payload = {
+        schema: 'adl-simulator-export-1',
+        modelVersion: model.modelVersion,
+        exportedAt: new Date().toISOString(),
+        scenario: model.presetId,
+        policy: model.policy,
+        outcome: model,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `adl-${model.presetId}-${model.policy}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function render() {
+      const model = viewModel(run);
+      if (!selectedId) selectedId = model.positions.find((position) => position.id === 'D')?.id || model.positions[0]?.id;
+      if (['ADL_READY', 'ADL_IN_PROGRESS'].includes(model.stage) && selectedId === 'D') {
+        selectedId = model.queue.find((candidate) => candidate.quantity !== '0.000000')?.id || selectedId;
+      }
+      renderSummary(model); renderStory(model); renderEvents(model); renderPositions(model); renderQueue(model); renderInspector(model); renderLedger(model);
+      $('model-version').textContent = model.modelVersion;
+      if (selectedScenario !== 'comparison') $('comparison-panel').hidden = !comparisonVisible;
+    }
+
+    $('scenario-select').addEventListener('change', updateScenario);
+    $('next-button').addEventListener('click', () => { if (!['RESOLVED', 'UNRESOLVED', 'BLOCKED'].includes(viewModel(run).stage)) { advance(run); steps += 1; render(); } });
+    $('back-button').addEventListener('click', () => { if (steps > 0) { steps -= 1; rebuild(); } });
+    $('reset-button').addEventListener('click', () => { steps = 0; selectedId = null; comparisonVisible = false; rebuild(); });
+    $('export-button').addEventListener('click', exportRun);
+    $('positions-body').addEventListener('click', (event) => { const row = event.target.closest('tr[data-id]'); if (row) { selectedId = row.dataset.id; render(); } });
+    $('queue-body').addEventListener('click', (event) => { const row = event.target.closest('tr[data-id]'); if (row) { selectedId = row.dataset.id; render(); } });
+    $('scenario-select').addEventListener('change', () => { if ($('scenario-select').value === 'comparison') { comparisonVisible = true; renderComparison(); } });
+    document.documentElement.dataset.adlReady = 'true';
+    render();
+  </script>
 </body>
 </html>
