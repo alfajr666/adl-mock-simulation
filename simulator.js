@@ -7,7 +7,7 @@
  * values never affect ranking or settlement.
  */
 
-const MODEL_VERSION = 'adl-model-1.0.0';
+const MODEL_VERSION = 'adl-model-1.0.1';
 
 function gcd(a, b) {
   a = a < 0n ? -a : a;
@@ -348,7 +348,7 @@ function prepareAdl(run) {
   if (run.stage !== 'MARKET_SETTLED') return run;
   run.stage = run.adlQuantity.isZero() ? 'RESOLVED' : 'ADL_READY';
   const scoreKey = run.policy === 'leverage' ? 'leverageScore' : 'referenceScore';
-  run.queue = rankCandidates(run).map((p, index) => ({
+  run.queue = (run.adlQuantity.isZero() ? [] : rankCandidates(run)).map((p, index) => ({
     id: p.id,
     rank: index + 1,
     score: p[scoreKey]?.json() || null,
@@ -362,7 +362,7 @@ function settleNextAdl(run) {
   if (run.stage === 'ADL_READY') run.stage = 'ADL_IN_PROGRESS';
   if (run.stage !== 'ADL_IN_PROGRESS') return run;
   const defaultPos = run.positions.find((p) => p.id === run.defaultId);
-  const candidates = rankCandidates(run);
+  const candidates = run.queue.map(({ id }) => run.views[id]);
   const next = candidates.find((p) => !p.remainingQty.isZero() && (run.caps[p.id] === undefined || run.caps[p.id].isPositive()));
   if (!next || defaultPos.remainingQty.isZero()) {
     run.stage = run.remainingDeficit.isZero() ? 'RESOLVED' : 'UNRESOLVED';
@@ -420,7 +420,7 @@ export function checkInvariants(run) {
 export function viewModel(run) {
   refresh(run);
   const invariant = checkInvariants(run);
-  const queue = run.queue?.length
+  const queue = run.queue
     ? run.queue.map((item) => {
       const p = run.views[item.id];
       return { id: p.id, label: p.label, rank: item.rank, score: ratFromJson(item.score)?.decimal(6) || null, leverage: ratFromJson(item.leverage)?.decimal(4) || null, pnl: p.pnl.decimal(2), equity: p.equity.decimal(2), quantity: p.remainingQty.decimal(6) };
