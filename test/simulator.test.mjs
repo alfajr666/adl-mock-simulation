@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { comparePolicies, createRun, runToEnd, viewModel } from '../simulator.js';
+import { advance, comparePolicies, createRun, runToEnd, viewModel } from '../simulator.js';
 
 function final(id, policy) {
   return viewModel(runToEnd(createRun(id, policy)));
@@ -25,6 +25,7 @@ test('sufficient insurance resolves without ADL', () => {
   assert.equal(model.stage, 'RESOLVED');
   assert.equal(model.deficit.adlQty, '0.000000');
   assert.equal(model.deficit.adjustment, '0.00');
+  assert.deepEqual(model.queue, []);
   assert.equal(model.fund.remaining, '50.00');
   assert.equal(model.invariant.equityTotal, '1010.00');
 });
@@ -75,4 +76,17 @@ test('a run is deterministic and cannot liquidate a healthy opening account', ()
   const blocked = viewModel(runToEnd(setup));
   assert.equal(blocked.stage, 'BLOCKED');
   assert.match(blocked.blockedReason, /healthy/);
+});
+
+test('settlement uses the frozen queue rather than recalculating the policy ranking', () => {
+  const run = createRun('comparison', 'reference');
+  for (let step = 0; step < 4; step += 1) advance(run);
+  assert.equal(run.stage, 'ADL_READY');
+  assert.equal(viewModel(run).queue[0].id, 'A');
+
+  // Simulate a policy change after freezing to distinguish the two rankings.
+  run.policy = 'leverage';
+  advance(run);
+
+  assert.equal(viewModel(run).positions.find((p) => p.id === 'A').quantity, '0.000000');
 });

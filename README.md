@@ -10,6 +10,12 @@ This project shows how a liquidation shortfall moves through three layers:
 
 The default walkthrough uses a small, reproducible example: a 100 USDT deficit is split into a 40 USDT insurance contribution and a 60 USDT ADL settlement adjustment. The app exposes the accounting ledger, affected quantities, position equity, and two allocation policies on identical inputs.
 
+## GitHub Pages
+
+The project site URL is [alfajr666.github.io/adl-mock-simulation/](https://alfajr666.github.io/adl-mock-simulation/).
+
+In the repository's **Settings → Pages**, set **Build and deployment → Source** to **GitHub Actions**. The deployment workflow runs the simulator tests and publishes `index.html` and `simulator.js` on pushes to `main`. For the initial deployment after enabling Pages, you can also run **Deploy simulator to GitHub Pages** manually from the **Actions** tab.
+
 ## Run locally
 
 The public simulator is browser-only. No Python service, market API, account connection, package install, or network access is required.
@@ -52,8 +58,7 @@ The tests cover the insurance waterfall, long/short symmetry, policy comparison,
 - `simulator.js` — exact-rational financial engine, state transitions, ledger events, invariants, and view model.
 - `index.html` — accessible browser walkthrough and presentation layer.
 - `test/simulator.test.mjs` — deterministic expected-value checks.
-- `agent.md` — historical prototype maintenance notes; the browser engine supersedes its server instructions for the public release.
-- `ADL_Mock_System_Brief*.md` — historical briefs retained for provenance.
+- `app.py` — historical Python prototype.
 
 This is an independent educational simulation. It does not represent an exchange's internal state or a production risk engine.
 

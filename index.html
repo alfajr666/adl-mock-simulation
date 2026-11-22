@@ -175,7 +175,8 @@
     <section aria-labelledby="scenario-heading">
       <div class="runtime-warning" id="runtime-warning" role="alert" hidden>
         <strong>Interactive runtime unavailable.</strong>
-        <span>Serve this folder over HTTP so the browser can load the financial engine: <code>python3 -m http.server 8000</code>, then open <code>http://localhost:8000/</code>.</span>
+        <span id="runtime-warning-detail">Reload the page to retry loading the simulator.</span>
+        <span id="local-runtime-help" hidden>Serve this folder over HTTP so the browser can load the financial engine: <code>python3 -m http.server 8000</code>, then open <code>http://localhost:8000/</code>.</span>
       </div>
       <div class="controls">
         <label id="scenario-heading">Scenario
@@ -270,9 +271,11 @@
   </main>
 
   <script>
-    window.setTimeout(() => {
+    document.getElementById('local-runtime-help').hidden = location.protocol !== 'file:';
+    document.getElementById('runtime-warning-detail').hidden = location.protocol === 'file:';
+    window.addEventListener('load', () => {
       if (document.documentElement.dataset.adlReady !== 'true') document.getElementById('runtime-warning').hidden = false;
-    }, 900);
+    });
     window.addEventListener('error', () => { document.getElementById('runtime-warning').hidden = false; });
   </script>
   <script type="module">
@@ -284,7 +287,6 @@
     let steps = 0;
     let run = createRun(selectedScenario, policy);
     let selectedId = null;
-    let comparisonVisible = false;
 
     const money = (value) => value === null || value === undefined ? 'Not calculated' : `${Number(value) < 0 ? '−' : ''}${Math.abs(Number(value)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
     const qty = (value) => value === null || value === undefined ? '—' : Number(value).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 });
@@ -300,7 +302,7 @@
     function updateScenario() {
       selectedScenario = $('scenario-select').value;
       policy = selectedScenario === 'comparison' ? 'reference' : policy;
-      steps = 0; selectedId = null; comparisonVisible = false; rebuild();
+      steps = 0; selectedId = null; rebuild();
     }
 
     function renderSummary(model) {
@@ -384,7 +386,7 @@
         const model = viewModel(run);
         const adlMatches = model.events.filter((event) => event.type === 'ADL').map((event) => event.title.replace(' matched ', ': ')).join(' · ') || 'No ADL match required.';
         const candidates = model.positions.filter((position) => ['A', 'B', 'C'].includes(position.id)).map((position) => `${position.id} ${position.quantity} units / ${money(position.equity)}`).join(' · ');
-        const order = model.events.find((event) => event.type === 'ADL_READY')?.detail || 'Queue is not required.';
+        const order = model.queue.map(({ rank, label }) => `#${rank} ${label}`).join(' · ') || 'Queue is not required.';
         return `<div class="compare-col"><h3>${label}</h3><dl><dt>Final status</dt><dd>${model.stage}</dd><dt>Gross deficit</dt><dd>${money(model.deficit.gross)}</dd><dt>Insurance</dt><dd>${money(model.fund.contribution)}</dd><dt>ADL adjustment</dt><dd>${money(model.deficit.adjustment)}</dd><dt>Residual</dt><dd>${money(model.deficit.remaining)}</dd><dt>Frozen queue</dt><dd>${escapeHtml(order)}</dd><dt>Matches</dt><dd>${escapeHtml(adlMatches)}</dd><dt>Candidate outcome</dt><dd>${escapeHtml(candidates)}</dd><dt>Invariant</dt><dd>${model.invariant.ok ? 'Balanced' : 'Failed'}</dd></dl></div>`;
       }).join('');
       $('comparison-panel').hidden = false;
@@ -417,19 +419,21 @@
       }
       renderSummary(model); renderStory(model); renderEvents(model); renderPositions(model); renderQueue(model); renderInspector(model); renderLedger(model);
       $('model-version').textContent = model.modelVersion;
-      if (selectedScenario !== 'comparison') $('comparison-panel').hidden = !comparisonVisible;
+      $('comparison-panel').hidden = selectedScenario !== 'comparison';
     }
 
-    $('scenario-select').addEventListener('change', updateScenario);
+    $('scenario-select').addEventListener('change', () => {
+      updateScenario();
+      if (selectedScenario === 'comparison') renderComparison();
+    });
     $('next-button').addEventListener('click', () => { if (!['RESOLVED', 'UNRESOLVED', 'BLOCKED'].includes(viewModel(run).stage)) { advance(run); steps += 1; render(); } });
     $('back-button').addEventListener('click', () => { if (steps > 0) { steps -= 1; rebuild(); } });
-    $('reset-button').addEventListener('click', () => { steps = 0; selectedId = null; comparisonVisible = false; rebuild(); });
+    $('reset-button').addEventListener('click', () => { steps = 0; selectedId = null; rebuild(); });
     $('export-button').addEventListener('click', exportRun);
     $('positions-body').addEventListener('click', (event) => { const row = event.target.closest('tr[data-id]'); if (row) { selectedId = row.dataset.id; render(); } });
     $('queue-body').addEventListener('click', (event) => { const row = event.target.closest('tr[data-id]'); if (row) { selectedId = row.dataset.id; render(); } });
-    $('scenario-select').addEventListener('change', () => { if ($('scenario-select').value === 'comparison') { comparisonVisible = true; renderComparison(); } });
-    document.documentElement.dataset.adlReady = 'true';
     render();
+    document.documentElement.dataset.adlReady = 'true';
   </script>
 </body>
 </html>
