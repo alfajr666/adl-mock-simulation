@@ -1,9 +1,9 @@
 // Shared simulator UI. Each simulator page is a thin shell that calls startApp('equity' | 'crypto').
-import { runScenario, sweep, seedStudy, caseView, MODEL_VERSION, DEFAULTS, LINKAGE_POLICIES } from '../engine/index.js';
+import { runScenario, sweep, seedStudy, tellStudy, caseView, MODEL_VERSION, DEFAULTS, LINKAGE_POLICIES } from '../engine/index.js';
 import { esc, int, dec1, dec2, pct, makeTimeFormat, price as fmtPrice, money as fmtMoney, moneySigned, download } from './format.js';
-import { TEXT, RULES, PATTERN_RULE_IDS, RULE_INFO, LABELS, DECISIONS, PARAMS, THRESHOLD_LABELS, METRICS, CAUSES, DESIGNED_CAUSES, GROUP_KINDS, EPISODE_TEXT, HONESTY, CONTRIVANCES, methodRules, METHOD_GENERAL } from './text.js';
+import { TEXT, RULES, PATTERN_RULE_IDS, RULE_INFO, LABELS, DECISIONS, PARAMS, THRESHOLD_LABELS, METRICS, CAUSES, DESIGNED_CAUSES, GROUP_KINDS, EPISODE_TEXT, HONESTY, CONTRIVANCES, TELLS_FRAMING, TELLS_TEXT, methodRules, METHOD_GENERAL } from './text.js';
 import { marker, tapeBars, tapeSpark, priceVolume, clusterChart, linkGraph, lineChart, distStrips, attachHover, binOf, COLORS } from './charts.js';
-import { CASE_STUDY_URL, SOURCE_URL, HOME_URL } from './links.js';
+import { CASE_STUDY_URLS, SOURCE_URL, HOME_URL } from './links.js';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
 const STUDY_SEEDS = Array.from({ length: 30 }, (_, i) => i + 1);
@@ -26,9 +26,9 @@ export function startApp(configId) {
   const state = {
     seed: DEFAULTS.seed, thresholds: {}, policy: DEFAULTS.linkagePolicy, instFilter: null,
     sort: { key: 'time', dir: 1 }, selected: null, tab: 'accounts', tradeShown: 25, clusterId: null, acctShown: ACCOUNT_ROWS, edgesShown: EDGE_ROWS,
-    decisions: new Map(), revealed: new Set(), unlocked: false, explorerParam: 'w2InstrumentShare',
+    decisions: new Map(), revealed: new Set(), tells: null, tellsRunning: false, unlocked: false, explorerParam: 'w2InstrumentShare',
   };
-  let result, tf, bars, barsSeed = null, lastCaseKey = '', raf = 0, explorerTimer = 0, seedToken = 0, seedRows = [], seedDone = false, sweepCache = new Map(), lastWidth = 0;
+  let result, tf, bars, barsSeed = null, lastCaseKey = '', raf = 0, explorerTimer = 0, tellsTimer = 0, seedToken = 0, seedRows = [], seedDone = false, sweepCache = new Map(), lastWidth = 0;
 
   const sliderKeys = new Set(PARAMS.map((p) => p.key));
   const isChanged = (k) => state.thresholds[k] !== undefined && state.thresholds[k] !== defs[k];
@@ -60,7 +60,7 @@ export function startApp(configId) {
       </header>
       <div class="notice">
         <div><strong>Model boundary.</strong> Alerts are leads, not findings. Every account, price and trade here is generated; the planted episodes are put there on purpose so you can check your judgement afterwards. ${esc(T.sessionNote)}</div>
-        <div class="acts"><a class="button ghost" href="${esc(CASE_STUDY_URL)}" target="_blank" rel="noreferrer">Case study</a><a class="button ghost" href="${esc(SOURCE_URL)}" target="_blank" rel="noreferrer">Source</a></div>
+        <div class="acts"><a class="button ghost" href="${esc(CASE_STUDY_URLS[configId])}" target="_blank" rel="noreferrer">Case study</a><a class="button ghost" href="${esc(SOURCE_URL)}" target="_blank" rel="noreferrer">Source</a></div>
       </div>
       <main id="main">
         <section aria-labelledby="start-h" class="panel" style="margin-top:0">
@@ -550,7 +550,27 @@ export function startApp(configId) {
   /* ------------------------------------------------------------ scorecard */
   const honestyHtml = () => `<div class="sub" id="honesty"><h3>What these figures can and cannot tell you</h3><p class="muted" style="font-size:.8rem">Measured over seeds 1 to 100 at default settings (equity, then crypto where two figures are given).</p><ul class="limits" style="margin-top:8px">${HONESTY.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>
       <h3 style="margin-top:14px">What stays contrived</h3><ul class="limits" style="margin-top:8px">${CONTRIVANCES.map((h) => `<li>${esc(h)}</li>`).join('')}</ul></div>`;
-  const KIND_TEXT = { episode: 'Planted episode', 'diluted-episode': 'Planted episode, diluted', trap: 'Designed trap', unrelated: 'Unrelated' };
+  function tellsHtml() {
+    const t = state.tells;
+    let body = '';
+    if (state.tellsRunning) body = '<p class="muted" role="status">Running the study on seeds 1 to 30…</p>';
+    else if (t) {
+      const byRule = new Map();
+      for (const r of t.register) { const e = byRule.get(r.rule) || {}; e[r.target] = r; byRule.set(r.rule, e); }
+      const rows = [...byRule.entries()].filter(([, e]) => e.ringPump).sort((a, b) => b[1].ringPump.precision - a[1].ringPump.precision).slice(0, 10);
+      const b = t.tape.busiestInstrumentShare, m = t.tape.medians;
+      body = `<p class="muted" style="font-size:.84rem">Seeds ${t.seeds ? '1 to ' + t.seeds : '1 to 30'} of the ${configId} market, run just now. Target: the ring and pump accounts (base rate ${pct(rows[0]?.[1].ringPump.baseRate, 0)}).</p>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Register tells"><table><thead><tr><th scope="col">Register rule</th><th scope="col">Precision, ring and pump</th><th scope="col">Recall</th><th scope="col">Precision, maker sub-accounts</th></tr></thead><tbody>${rows.map(([rule, e]) => `<tr><td class="wrap">${esc(rule)}</td><td>${pct(e.ringPump.precision, 1)}</td><td>${pct(e.ringPump.recall, 0)}</td><td>${e.makerSubs ? pct(e.makerSubs.precision, 1) : '–'}</td></tr>`).join('')}</tbody></table></div>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Tape tell"><table><thead><tr><th scope="col">Tape measure (accounts with at least ${b.floorTrades} trades)</th><th scope="col">Planted accounts</th><th scope="col">Honest accounts</th></tr></thead><tbody>
+          <tr><td>Busiest-instrument share, median</td><td>${dec2(m.plantedAccounts.busiestShare)}</td><td>${dec2(m.honestAccounts.busiestShare)}</td></tr>
+          <tr><td>Top-counterparty share, median</td><td>${dec2(m.plantedAccounts.topCounterpartyShare)}</td><td>${dec2(m.honestAccounts.topCounterpartyShare)}</td></tr>
+          <tr><td>Mean trade size (lots), median</td><td>${dec1(m.plantedAccounts.meanTradeSizeLots)}</td><td>${dec1(m.honestAccounts.meanTradeSizeLots)}</td></tr></tbody></table></div>
+        <p class="muted" style="font-size:.84rem">Flagging a busiest-instrument share of at least ${b.threshold} (makers excluded): precision ${pct(b.precision, 0)}, recall ${pct(b.recall, 0)}.</p>`;
+    }
+    return `<div class="sub" id="tells"><h3>How the planted accounts give themselves away</h3><p class="note">${esc(TELLS_FRAMING)}</p><ul class="limits" style="margin-top:8px">${TELLS_TEXT.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <p style="margin-top:10px"><button class="button" id="run-tells" type="button" ${state.tellsRunning ? 'disabled' : ''}>${t ? 'Run the study again' : 'Run the tell study live on seeds 1 to 30'}</button></p>${body}</div>`;
+  }
+  const KIND_TEXT = { episode: 'Planted episode, accounts named', 'diluted-episode': 'Planted episode, diluted', 'price-only-episode': 'Planted episode, price move only', trap: 'Designed trap', unrelated: 'Unrelated' };
   function renderScore() {
     const sec = $('score-section');
     if (!state.unlocked) {
@@ -564,24 +584,24 @@ export function startApp(configId) {
     const fits = decided.filter((a) => { const d = state.decisions.get(a.id), l = sc.labels[a.id]; return d !== 'monitor' && d === fitting(l?.label, l?.cause); });
     const tile = (l, v, sub) => `<div class="metric"><div class="label">${l}</div><div class="value">${v}</div>${sub ? `<div class="faint" style="font-size:.72rem;margin-top:6px">${sub}</div>` : ''}</div>`;
     const pc = (x) => (x === null || x === undefined ? 'no alerts' : pct(x));
-    const rowOf = (name, x) => `<tr><th scope="row" style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px">${name}</th><td>${x.groups.total}</td><td>${x.groups.episodeMatches}</td><td>${x.groups.diluted}</td><td>${x.groups.explainable}</td><td>${x.groups.unrelated}</td><td>${x.episodes.found} clean, ${x.episodes.diluted} diluted, ${x.episodes.missed} missed</td><td>${pc(x.precision.group.match)}</td><td>${pc(x.precision.group.matchOrExplainable)}</td></tr>`;
+    const rowOf = (name, x) => `<tr><th scope="row" style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px">${name}</th><td>${x.groups.total}</td><td>${x.groups.episodeMatches}</td><td>${x.groups.diluted}</td><td>${x.groups.explainable}</td><td>${x.groups.unrelated}</td><td>${x.episodes.found} accounts named, ${x.episodes.diluted} diluted, ${x.episodes.priceOnly} price only, ${x.episodes.missed} missed</td><td>${pc(x.precision.group.match)}</td><td>${pc(x.precision.group.matchOrExplainable)}</td></tr>`;
     const causeEntries = Object.entries(sc.causes);
     const designed = causeEntries.filter(([c]) => DESIGNED_CAUSES.has(c)), ordinary = causeEntries.filter(([c]) => !DESIGNED_CAUSES.has(c));
     const causeList = (list) => (list.length ? `<ul class="limits" style="margin-top:6px">${list.map(([c, n]) => `<li>${n} × ${esc(CAUSES[c] || c)}</li>`).join('')}</ul>` : '<p class="muted" style="font-size:.84rem">None at these settings.</p>');
     const caseRows = sc.cases.map((c) => {
       const l = sc.labels[c.alertIds[0]] || {};
-      return `<tr><td>${esc(KIND_TEXT[c.kind] || c.kind)}</td><td>${esc(c.instrument)}</td><td>${c.rules.map(esc).join(', ')}</td><td>${c.alertIds.length}</td><td class="wrap">${esc(c.kind === 'episode' || c.kind === 'diluted-episode' ? (c.episodeId || '') : (CAUSES[l.cause] ? (DESIGNED_CAUSES.has(l.cause) ? 'Designed trap: ' : 'Ordinary honest activity: ') + CAUSES[l.cause] : (l.cause || '')))}</td></tr>`;
+      return `<tr><td>${esc(KIND_TEXT[c.kind] || c.kind)}</td><td>${esc(c.instrument)}</td><td>${c.rules.map(esc).join(', ')}</td><td>${c.alertIds.length}</td><td class="wrap">${esc(c.kind === 'episode' || c.kind === 'diluted-episode' || c.kind === 'price-only-episode' ? (c.episodeId || '') : (CAUSES[l.cause] ? (DESIGNED_CAUSES.has(l.cause) ? 'Designed trap: ' : 'Ordinary honest activity: ') + CAUSES[l.cause] : (l.cause || '')))}</td></tr>`;
     }).join('');
     sec.innerHTML = `<div class="panel-head"><h2 id="score-h">Scorecard</h2><span class="tag">Answer key unlocked</span></div>
       <div class="panel-body">
         <div id="cases-block">
         <p class="note">The scorecard counts <strong>cases</strong>: one per planted episode found, one per designed trap that alerted, and one per cluster of unrelated alerts. Several alerts on the same thing are one case. W2, P1 and P2 are counted; the W1 self-match hygiene rule is reported separately below.</p>
-        <div class="metrics" role="group" aria-label="Cases">${tile('Cases', cs.cases)}${tile('Planted-episode cases', cs.episodeCases, 'found cleanly')}${tile('Diluted cases', cs.dilutedEpisodeCases, 'overlap an episode, mostly honest accounts')}${tile('Trap cases (designed)', cs.trapCases, `${cs.explainableCases} explainable`)}${tile('Unrelated cases', cs.unrelatedCases, 'no planted cause')}</div>
-        <div class="metrics" role="group" aria-label="Case shares and episodes">${tile('Share of cases matching a planted episode', pc(cs.shareMatchingEpisode))}${tile('Share matching or explainable', pc(cs.shareMatchingOrExplainable))}${tile('Episodes found cleanly', `${cs.episodesFound} of ${o.episodes.planted}`)}${tile('Found diluted', cs.dilutedEpisodeCases)}${tile('Missed', cs.episodesMissed)}</div>
+        <div class="metrics" role="group" aria-label="Cases">${tile('Cases', cs.cases)}${tile('Planted-episode cases', cs.episodeCases, 'accounts named')}${tile('Diluted cases', cs.dilutedEpisodeCases, 'overlap an episode, mostly honest accounts')}${tile('Price-only cases', cs.priceOnlyEpisodeCases, 'move flagged, nobody named')}${tile('Trap cases (designed)', cs.trapCases, `${cs.explainableCases} explainable`)}${tile('Unrelated cases', cs.unrelatedCases, 'no planted cause')}</div>
+        <div class="metrics" role="group" aria-label="Case shares and episode statuses">${tile('Share of cases matching a planted episode', pc(cs.shareMatchingEpisode))}${tile('Share matching or explainable', pc(cs.shareMatchingOrExplainable))}${tile('Found, accounts named', `${cs.episodesFound} of ${o.episodes.planted}`)}${tile('Found, diluted', cs.dilutedEpisodeCases)}${tile('Price move flagged, no accounts named', cs.episodesPriceOnly)}${tile('Missed', cs.episodesMissed)}</div>
         <p class="note">These are counts over a handful of cases and two planted episodes in one synthetic run. One case more or fewer moves a share a lot; the explorer below shows other seeds.</p>
         <div class="sub"><h3>The cases</h3><div class="table-wrap" tabindex="0" role="region" aria-label="Cases"><table><thead><tr><th scope="col">Kind</th><th scope="col">Instrument</th><th scope="col">Rules</th><th scope="col">Alerts</th><th scope="col">What it was</th></tr></thead><tbody>${caseRows}</tbody></table></div></div>
         </div>
-        <div class="sub"><h3>Where the non-matching cases came from</h3><h4 style="margin-top:8px">Designed traps</h4>${causeList(designed)}<h4 style="margin-top:8px">Ordinary honest activity the scenario generates</h4>${causeList(ordinary)}</div>
+        <div class="sub"><h3>Where the non-matching cases came from</h3><p class="muted" style="font-size:.84rem">Almost all unrelated cases that are not designed traps are alerts on scripted trades between linked honest accounts, at a rate the scenario sets (each of 9 honest groups crosses with probability 0.5 per seed). Over 100 seeds, honest momentum bursts and block trades produced almost no alerts: equity 0 and 0, crypto 4 and 0.</p><h4 style="margin-top:8px">Designed traps</h4>${causeList(designed)}<h4 style="margin-top:8px">Ordinary honest activity the scenario generates</h4>${causeList(ordinary)}</div>
         <details class="inner" id="rule-detail"><summary>Rule-level detail: alert groups and alert counts</summary><div>
           <p class="muted" style="font-size:.84rem;margin-top:8px">Alert groups: ${o.groups.total} (${o.groups.episodeMatches} match, ${o.groups.diluted} diluted, ${o.groups.explainable} explainable, ${o.groups.unrelated} unrelated). Alerts: ${o.alerts.total} (${o.alerts.match} match, ${o.alerts.matchDiluted} diluted, ${o.alerts.explainable} explainable, ${o.alerts.unrelated} unrelated). At this level, “precision strict” is matches ÷ groups and “lenient” is matches plus explainable ÷ groups.</p>
           <div class="table-wrap" tabindex="0" role="region" aria-label="Score by rule"><table class="score-table"><thead><tr><th scope="col">Rule</th><th scope="col">Groups</th><th scope="col">Match</th><th scope="col">Diluted</th><th scope="col">Explainable</th><th scope="col">Unrelated</th><th scope="col">Episodes</th><th scope="col">Precision, strict</th><th scope="col">Precision, lenient</th></tr></thead><tbody>
@@ -589,6 +609,7 @@ export function startApp(configId) {
         <div class="sub" id="hygiene"><h3>Self-match hygiene (W1), outside the scorecard</h3>
           <p class="muted" style="font-size:.86rem">W1 raised ${sm.alerts} alert${sm.alerts === 1 ? '' : 's'} on ${sm.accountsFlagged} account${sm.accountsFlagged === 1 ? '' : 's'}: ${sm.onPlantedAccounts} on planted-episode accounts, ${sm.onHonestAlgoAccounts} on honest algorithmic accounts, ${sm.onOtherAccounts} elsewhere. Honest algo accounts trade with themselves from time to time, so a self-match alone is weak evidence; it is useful for hygiene and as one more clue next to a linked group. It is not counted in any figure above.</p></div>
         ${honestyHtml()}
+        ${tellsHtml()}
         <p class="note">Your decisions: ${decided.length} of ${result.alerts.length} alerts decided; ${fits.length} fit the label${decided.some((a) => state.decisions.get(a.id) === 'monitor') ? ' (“keep monitoring” counts as neither)' : ''}. The simulator treats Escalate as fitting a match and Close — explained as fitting an explainable or unrelated alert; that is a simplification, and for a diluted match escalating is defensible but the case file needs narrowing.</p>
       </div>`;
   }
@@ -622,7 +643,7 @@ export function startApp(configId) {
     if (!$('explorer-param')) {
       sec.innerHTML = `<div class="panel-head"><h2 id="explore-h">Trade-off explorer</h2><span class="tag">Answer key unlocked</span></div>
         <div class="panel-body">
-          <p class="note">Pick a setting. The chart reruns detection on this seed across its range, holding everything else at your current settings. “Found cleanly” counts planted episodes caught by an alert that names mostly planted accounts (at most 2). “Diluted” counts episodes caught only by alerts that name mostly honest accounts. “Designed-trap cases” counts the two teaching look-alikes (the market-maker crosses and the news shock) that raised an alert. “Unrelated cases” counts everything else with no planted cause, including ordinary honest activity.</p>
+          <p class="note">Pick a setting. The chart reruns detection on this seed across its range, holding everything else at your current settings. “Accounts named” counts planted episodes caught by a rule that names accounts, mostly planted ones (at most 2). “Diluted” counts episodes whose named accounts are mostly honest. “Price move flagged, no accounts named” counts episodes seen only by the price-and-volume rule. “Designed-trap cases” counts the two teaching look-alikes (the market-maker crosses and the news shock) that raised an alert. “Unrelated cases” counts everything else with no planted cause, including ordinary honest activity.</p>
           <div class="explorer-bar"><label class="field" for="explorer-param">Setting to sweep<select id="explorer-param">${explorerOptions().map((o) => `<option value="${o.key}">${esc(o.label)}</option>`).join('')}</select></label></div>
           <div class="swatches" id="sweep-legend"></div>
           <div class="chart-host" id="sweep-host"></div>
@@ -649,8 +670,9 @@ export function startApp(configId) {
     let data = sweepCache.get(key);
     if (!data) { data = sweep(configId, param, spec.values, { seed: state.seed, thresholds: base, linkagePolicy: state.policy }); sweepCache.set(key, data); if (sweepCache.size > 40) sweepCache.delete(sweepCache.keys().next().value); }
     const series = [
-      { key: 'found', short: 'Clean', label: 'Episodes found cleanly (of 2)', color: COLORS.green, shape: 'square', dash: '', values: data.rows.map((r) => r.episodesFound) },
+      { key: 'found', short: 'Named', label: 'Episodes found, accounts named (of 2)', color: COLORS.green, shape: 'square', dash: '', values: data.rows.map((r) => r.episodesFound) },
       { key: 'dil', short: 'Diluted', label: 'Episodes found, diluted', color: COLORS.accent, shape: 'diamond', dash: '9 3 2 3', values: data.rows.map((r) => r.episodesDiluted) },
+      { key: 'po', short: 'Price only', label: 'Price move flagged, no accounts named', color: COLORS.red, shape: 'circle', dash: '12 4', values: data.rows.map((r) => r.episodesPriceOnly) },
       { key: 'traps', short: 'Traps', label: 'Designed-trap cases', color: COLORS.amber, shape: 'triangle', dash: '7 4', values: data.rows.map((r) => r.caseSummary.trapCases) },
       { key: 'unrel', short: 'Unrelated', label: 'Unrelated cases', color: COLORS.blue, shape: 'circle', dash: '2 3', values: data.rows.map((r) => r.caseSummary.unrelatedCases) },
     ];
@@ -662,7 +684,7 @@ export function startApp(configId) {
     attachHover(host, ch.cols);
     $('sweep-legend').innerHTML = series.map((s) => `<span><svg viewBox="0 0 34 12"><line x1="1" x2="33" y1="6" y2="6" stroke="${s.color}" stroke-width="2.25" ${s.dash ? `stroke-dasharray="${s.dash}"` : ''}/>${marker(s.shape, 17, 6, 3.6, `fill="${s.color}" stroke="${COLORS.panel}"`)}</svg>${esc(s.label)}</span>`).join('') + '<span><svg viewBox="0 0 34 12"><line x1="17" x2="17" y1="0" y2="12" stroke="' + COLORS.accent + '" stroke-width="1.5" stroke-dasharray="3 2"/></svg>your current setting</span>';
     const isLink = param === 'linkagePolicy';
-    $('linkage-effects').innerHTML = isLink ? `<div class="sub" style="margin-top:12px"><h3>What each policy does to the groups</h3><div class="table-wrap" tabindex="0" role="region" aria-label="Linkage effects"><table><thead><tr><th scope="col">Policy</th><th scope="col">Found cleanly</th><th scope="col">Found diluted</th><th scope="col">Unrelated cases</th><th scope="col">Largest group (accounts)</th><th scope="col">False-linked pairs</th><th scope="col">Accounts named per matching alert</th></tr></thead><tbody>${data.rows.map((r, i) => `<tr><th scope="row" style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px">${esc(spec.labels[i])}</th><td>${r.episodesFound}</td><td>${r.episodesDiluted}</td><td>${r.caseSummary.unrelatedCases}</td><td>${int(r.linkage.largestCluster)}</td><td>${int(r.linkage.falseLinkedPairs)}</td><td>${dec1(r.linkage.meanAccountsPerMatchingAlert)}</td></tr>`).join('')}</tbody></table></div><p class="muted" style="font-size:.8rem">“False-linked pairs” counts pairs of unrelated honest accounts that end up in one group (the designed honest groups are included, so it is above zero even at the default). Loose linkage builds very large groups and dilutes the planted alerts; strict linkage keeps groups small but fragments the ring.</p></div>` : '';
+    $('linkage-effects').innerHTML = isLink ? `<div class="sub" style="margin-top:12px"><h3>What each policy does to the groups</h3><div class="table-wrap" tabindex="0" role="region" aria-label="Linkage effects"><table><thead><tr><th scope="col">Policy</th><th scope="col">Found, accounts named</th><th scope="col">Found, diluted</th><th scope="col">Price move flagged, no accounts named</th><th scope="col">Unrelated cases</th><th scope="col">Largest group (accounts)</th><th scope="col">False-linked pairs</th><th scope="col">Accounts named per matching alert</th></tr></thead><tbody>${data.rows.map((r, i) => `<tr><th scope="row" style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px">${esc(spec.labels[i])}</th><td>${r.episodesFound}</td><td>${r.episodesDiluted}</td><td>${r.episodesPriceOnly}</td><td>${r.caseSummary.unrelatedCases}</td><td>${int(r.linkage.largestCluster)}</td><td>${int(r.linkage.falseLinkedPairs)}</td><td>${dec1(r.linkage.meanAccountsPerMatchingAlert)}</td></tr>`).join('')}</tbody></table></div><p class="muted" style="font-size:.8rem">“False-linked pairs” counts pairs of unrelated honest accounts that end up in one group (the designed honest groups are included, so it is above zero even at the default). Loose linkage builds very large groups and dilutes the planted alerts; strict linkage keeps groups small but fragments the ring.</p></div>` : '';
     $('sweep-table').innerHTML = `<div class="table-wrap" tabindex="0" role="region" aria-label="Sweep values"><table><thead><tr><th scope="col">${esc(spec.xLabel)}</th>${series.map((s) => `<th scope="col">${esc(s.label)}</th>`).join('')}</tr></thead><tbody>${points.map((p, i) => `<tr><th scope="row" style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:13px">${esc(p.label)}</th>${series.map((s) => `<td>${s.values[i]}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   }
 
@@ -676,7 +698,7 @@ export function startApp(configId) {
     host.innerHTML = distStrips({ currentSeed: state.seed, w: wOf(host, 700), rows: [
       { label: 'Share of cases matching a planted episode', values: col('shareMatchingEpisode'), domain: [0, 1], ticks: [0, 0.25, 0.5, 0.75, 1], fmt: (v) => pct(v) },
       { label: 'Share of cases matching or explainable', values: col('shareMatchingOrExplainable'), domain: [0, 1], ticks: [0, 0.25, 0.5, 0.75, 1], fmt: (v) => pct(v) },
-      { label: 'Planted episodes found cleanly (of 2)', values: col('episodesFound'), domain: [0, 2], ticks: [0, 1, 2], fmt: (v) => String(+v.toFixed(1)) },
+      { label: 'Episodes found with accounts named (of 2)', values: col('episodesFound'), domain: [0, 2], ticks: [0, 1, 2], fmt: (v) => String(+v.toFixed(1)) },
       { label: 'Unrelated cases', values: col('unrelatedCases'), domain: [0, maxU], ticks: Array.from({ length: maxU + 1 }, (_, i) => i).filter((i) => maxU <= 8 || i % 2 === 0), fmt: (v) => String(+v.toFixed(1)) },
     ] });
     $('seed-legend').innerHTML = `<span><svg viewBox="0 0 34 12"><circle cx="17" cy="6" r="3" fill="${COLORS.blue}"/></svg>one seed</span><span><svg viewBox="0 0 34 12"><rect x="13" y="2" width="8" height="8" fill="${COLORS.accent}" transform="rotate(45 17 6)"/></svg>the seed you are viewing</span><span><svg viewBox="0 0 34 12"><line x1="3" x2="31" y1="6" y2="6" stroke="${COLORS.faint}" stroke-width="5" stroke-linecap="round"/></svg>minimum to maximum</span><span><svg viewBox="0 0 34 12"><line x1="17" x2="17" y1="0" y2="12" stroke="${COLORS.accent}" stroke-width="2" stroke-dasharray="4 2"/></svg>median</span>`;
@@ -684,10 +706,10 @@ export function startApp(configId) {
     const clean = seedRows.filter((r) => r.targets.bothEpisodesFound).length;
     const failing = seedRows.filter((r) => !r.targets.bothEpisodesFound);
     const rate = (f) => `${Math.round((seedRows.filter(f).length / n) * 100)}%`;
-    $('seed-summary').innerHTML = `<strong>The only pass/fail line:</strong> both planted episodes were found cleanly in ${clean} of ${n} seeds${failing.length ? ` (not on seed${failing.length === 1 ? '' : 's'} ${failing.map((r) => `${r.seed}: ${r.episodesFound} clean, ${r.episodesDiluted} diluted, ${r.episodesMissed} missed`).join('; ')})` : ''}.`;
+    $('seed-summary').innerHTML = `<strong>The only pass/fail line:</strong> both planted episodes were found with accounts named in ${clean} of ${n} seeds${failing.length ? ` (not on seed${failing.length === 1 ? '' : 's'} ${failing.map((r) => `${r.seed}: ${r.episodesFound} named, ${r.episodesDiluted} diluted, ${r.episodesPriceOnly} price only, ${r.episodesMissed} missed`).join('; ')})` : ''}.`;
     $('trap-rates').innerHTML = `<h4>How often each designed trap fired (rates, not pass or fail)</h4><ul class="limits" style="margin-top:6px"><li>An explainable same-owner-cross alert: ${rate((r) => r.targets.traps.explainableAlert)} of ${n} seeds.</li><li>The news-shock alert on the price rule (P1): ${rate((r) => r.targets.traps.shockAlertsOnP1)}.</li><li>The news-shock alert on the linked-group price rule (P2): ${rate((r) => r.targets.traps.shockAlertsOnP2)}.</li></ul>`;
     const f = (x) => (x === null ? '–' : pct(x));
-    $('seed-table').innerHTML = `<div class="table-wrap" tabindex="0" role="region" aria-label="Results by seed"><table><thead><tr><th scope="col">Seed</th><th scope="col">Cases</th><th scope="col">Episode cases</th><th scope="col">Diluted</th><th scope="col">Trap cases</th><th scope="col">Unrelated cases</th><th scope="col">Found cleanly</th><th scope="col">Share matching</th><th scope="col">Share matching or explainable</th></tr></thead><tbody>${seedRows.map((r) => `<tr><th scope="row" style="color:var(--ink);font-size:13px;text-transform:none;letter-spacing:0">${r.seed}${r.seed === state.seed ? ' (viewing)' : ''}</th><td>${r.cases}</td><td>${r.episodeCases}</td><td>${r.dilutedEpisodeCases}</td><td>${r.trapCases}</td><td>${r.unrelatedCases}</td><td>${r.episodesFound}</td><td>${f(r.shareMatchingEpisode)}</td><td>${f(r.shareMatchingOrExplainable)}</td></tr>`).join('')}</tbody></table></div>`;
+    $('seed-table').innerHTML = `<div class="table-wrap" tabindex="0" role="region" aria-label="Results by seed"><table><thead><tr><th scope="col">Seed</th><th scope="col">Cases</th><th scope="col">Episode cases</th><th scope="col">Diluted</th><th scope="col">Trap cases</th><th scope="col">Unrelated cases</th><th scope="col">Found, accounts named</th><th scope="col">Diluted</th><th scope="col">Price only</th><th scope="col">Share matching</th><th scope="col">Share matching or explainable</th></tr></thead><tbody>${seedRows.map((r) => `<tr><th scope="row" style="color:var(--ink);font-size:13px;text-transform:none;letter-spacing:0">${r.seed}${r.seed === state.seed ? ' (viewing)' : ''}</th><td>${r.cases}</td><td>${r.episodeCases}</td><td>${r.dilutedEpisodeCases}</td><td>${r.trapCases}</td><td>${r.unrelatedCases}</td><td>${r.episodesFound}</td><td>${r.episodesDiluted}</td><td>${r.episodesPriceOnly}</td><td>${f(r.shareMatchingEpisode)}</td><td>${f(r.shareMatchingOrExplainable)}</td></tr>`).join('')}</tbody></table></div>`;
   }
 
   function runSeeds() {
@@ -745,13 +767,14 @@ export function startApp(configId) {
     });
     const sc = result.score;
     const payload = {
-      schema: 'trade-surveillance-export-3', modelVersion: MODEL_VERSION, exportedAt: new Date().toISOString(),
+      schema: 'trade-surveillance-export-4', modelVersion: MODEL_VERSION, exportedAt: new Date().toISOString(),
       note: 'Synthetic data. Alerts are leads for review, not conclusions.',
       simulator: configId, seed: state.seed, linkagePolicy: state.policy, thresholds: result.thresholds,
       alertCount: alerts.length, alerts,
       decisionsOnAlertsNoLongerRaised: [...decided].map(([id, d]) => ({ id, decision: DECISIONS[d].label })),
       answerKeyUnlocked: state.unlocked,
       score: state.unlocked ? { level: 'cases (W2, P1, P2)', caseSummary: sc.caseSummary, cases: sc.cases, ruleLevel: { overall: sc.overall, byRule: sc.byRule }, causes: sc.causes, decoysAlerted: sc.decoysAlerted, selfMatchHygiene: sc.selfMatch } : null,
+      tellStudy: state.unlocked && state.tells ? { register: state.tells.register, tape: state.tells.tape } : null,
       seedStudy: state.unlocked && seedRows.length ? { seeds: seedRows.map((r) => r.seed), rows: seedRows.map(({ targets, ...r }) => r), complete: seedDone } : null,
     };
     download(`surveillance-${configId}-seed${state.seed}.json`, JSON.stringify(payload, null, 2));
@@ -861,6 +884,17 @@ export function startApp(configId) {
       e.preventDefault(); state.tab = ids[i]; renderCase(true); $(`tab-${state.tab}`)?.focus();
     });
 
+    $('score-section').addEventListener('click', (e) => {
+      if (!e.target.closest('#run-tells') || state.tellsRunning) return;
+      state.tellsRunning = true; renderScore();
+      document.getElementById('tells')?.scrollIntoView({ block: 'nearest' });
+      clearTimeout(tellsTimer);
+      tellsTimer = setTimeout(() => {
+        const r = tellStudy(configId, STUDY_SEEDS);
+        state.tells = { ...r, seeds: STUDY_SEEDS.length }; state.tellsRunning = false; renderScore();
+        document.getElementById('run-tells')?.focus();
+      }, 30);
+    });
     $('explore-section').addEventListener('change', (e) => { if (e.target.id === 'explorer-param') { state.explorerParam = e.target.value; renderSweep(); } });
 
     let rt = 0;

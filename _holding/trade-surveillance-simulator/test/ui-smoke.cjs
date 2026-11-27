@@ -42,7 +42,7 @@ const overflow = (page) => page.evaluate(() => document.documentElement.scrollWi
 const LEAK = /MATCH|EXPLAINABLE|UNRELATED|SELF_MATCH|planted-|EP-WASH|EP-PUMP|DEC-|honest-|same-owner|benign-shock|natural-move|background-collision|coincidental|Matches a planted|Unrelated|Explainable|\bTP\b|\bFP\b/;
 const OLD_WORDS = /true hit|false alarm|\bIDX\b|sigma|z-score|deviations?\b/i;
 
-async function runPage(browser, base, ENG, cfg, vpName) {
+async function runPage(browser, base, ENG, LINKS, cfg, vpName) {
   const tag = `${cfg}@${vpName}`;
   const def = ENG.runScenario(cfg, { seed: 1 });
   const N = def.alerts.length;
@@ -67,6 +67,9 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   check((await page.locator('#count-live').textContent()).startsWith(String(N)), `${tag}: live count text starts with the count`);
   const hyg = await page.locator('#queue-body .hyg').count();
   check(hyg === def.alerts.filter((a) => a.rule === 'W1').length && hyg > 0, `${tag}: every W1 alert is tagged as a hygiene rule (${hyg})`);
+
+  check(await page.locator('.notice a', { hasText: 'Case study' }).getAttribute('href') === LINKS.CASE_STUDY_URLS[cfg] && await page.locator('.notice a', { hasText: 'Source' }).getAttribute('href') === LINKS.SOURCE_URL, `${tag}: the case-study link is this market's own (${LINKS.CASE_STUDY_URLS[cfg]}) and source is the configured constant`);
+  check(await page.locator('#tells').count() === 0 && !/give themselves away/i.test(await page.locator('#score-section').innerText()), `${tag}: the tells block is absent while the answer key is locked`);
 
   // ---- nothing about the answer is visible or inferable before reveal ----
   const vis = await page.evaluate(() => ['#tape', '#queue-section', '#case-section', '#controls'].map((s) => document.querySelector(s).outerHTML).join('\n'));
@@ -216,7 +219,10 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   await page.click('#key-toggle');
   await page.waitForSelector('#score-section .metrics');
   const sc = await page.locator('#score-section').innerText();
-  check(/Cases/i.test(sc) && /Share of cases matching a planted episode/i.test(sc) && /Share matching or explainable/i.test(sc) && /Episodes found cleanly/i.test(sc) && /Found diluted/i.test(sc) && /Trap cases \(designed\)/i.test(sc) && /Unrelated cases/i.test(sc), `${tag}: scorecard leads with cases, the two shares and clean, diluted and missed episodes`);
+  check(/Cases/i.test(sc) && /Share of cases matching a planted episode/i.test(sc) && /Share matching or explainable/i.test(sc) && /Found, accounts named/i.test(sc) && /Found, diluted/i.test(sc) && /Price move flagged, no accounts named/i.test(sc) && /Missed/i.test(sc) && /Trap cases \(designed\)/i.test(sc) && /Unrelated cases/i.test(sc), `${tag}: scorecard leads with cases, the two shares and the four episode statuses`);
+  const es = def.score.caseSummary;
+  const tileVal = async (label) => (await page.locator('#cases-block, #score-section .metrics .metric', { hasText: label }).first().innerText()).replace(/\s+/g, ' ');
+  check(new RegExp(`${es.episodesFound} of 2`).test(await page.locator('#score-section .metric', { hasText: 'Found, accounts named' }).first().innerText()), `${tag}: "found, accounts named" tile equals the engine (${es.episodesFound} of 2)`);
   check(!/precision/i.test(await page.locator('#cases-block').innerText()), `${tag}: the case-level block does not use the word precision`);
   const caseRowsN = await page.locator('#cases-block table tbody tr').count();
   check(caseRowsN === def.score.caseSummary.cases, `${tag}: case table lists the engine's ${def.score.caseSummary.cases} cases (got ${caseRowsN})`);
@@ -224,7 +230,16 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   check(/Designed traps/.test(sc) && /Ordinary honest activity the scenario generates/.test(sc), `${tag}: the causes list separates designed traps from ordinary honest activity`);
   check(await page.locator('#hygiene').count() === 1 && /outside the scorecard/i.test(await page.locator('#hygiene').innerText()) && /honest/i.test(await page.locator('#hygiene').innerText()), `${tag}: self-match hygiene block is separate and explains honest algo accounts`);
   const honest = await page.locator('#honesty').innerText();
-  check(/100 of 100 seeds/.test(honest) && /0\.29/.test(honest) && /0\.92/.test(honest) && /less sensitive across the board/.test(honest) && /0\.405/.test(honest) && /What stays contrived/i.test(honest) && /0\.93 to 0\.95/.test(honest) && /scripted/.test(honest) && !/35%|61%/.test(honest), `${tag}: honesty panel carries the 1.2.0 statements and the contrivances list`);
+  check(/97 of 100 in crypto/.test(honest) && /31, 58 and 79/.test(honest) && /0\.29/.test(honest) && /less sensitive across the board/.test(honest) && /291/.test(honest) && /0\.795/.test(honest) && /What stays contrived/i.test(honest) && /scripted/.test(honest) && !/35%|61%|0\.405 /.test(honest) && !/no rule that uses only the register/i.test(honest), `${tag}: honesty panel carries the 1.2.0 statements and the contrivances list`);
+  // tells block: locked before unlock (checked above), live table after
+  check(await page.locator('#tells').count() === 1 && /A planted scenario is always easier than a real one/.test(await page.locator('#tells').innerText()), `${tag}: the tells block appears after unlock with its framing sentence`);
+  check(await page.locator('#tells table').count() === 0, `${tag}: the tells table is not shown until the study is run`);
+  const tellEng = ENG.tellStudy(cfg, Array.from({ length: 30 }, (_, i) => i + 1));
+  await page.click('#run-tells');
+  await page.waitForSelector('#tells table', { timeout: 30000 });
+  const tt = await page.locator('#tells').innerText();
+  const bs = tellEng.tape.busiestInstrumentShare;
+  check(tt.includes(`precision ${Math.round(bs.precision * 100)}%`) && (await page.locator('#tells table tbody tr').count()) >= 10, `${tag}: live tell study renders tables that agree with the engine (tape precision ${Math.round(bs.precision * 100)}%)`);
   const keyCells = await page.locator('#queue-body tr[data-id] td:last-child .status').allInnerTexts();
   check(keyCells.length === N && keyCells.every((t) => ['Match', 'Diluted', 'Explainable', 'Unrelated', 'Hygiene'].includes(t)), `${tag}: queue key column uses the three labels plus hygiene`);
   const keyMatches = await page.evaluate(() => [...document.querySelectorAll('#queue-body tr[data-id]')].map((r) => [r.dataset.id, r.querySelector('td:last-child').innerText.trim()]));
@@ -233,7 +248,7 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   check(!OLD_WORDS.test(await page.locator('body').innerText()), `${tag}: no retired wording anywhere after unlock`);
   await page.waitForFunction(() => /of 30 seeds/.test(document.getElementById('seed-summary')?.textContent || ''), null, { timeout: 30000 });
   const seedTxt = await page.locator('#explore-section').innerText();
-  check(/read the distribution, not one run/.test(seedTxt) && /median/.test(seedTxt) && /found cleanly in \d+ of 30 seeds/.test(seedTxt), `${tag}: seed study states the single-run caveat, shows medians and the one pass/fail line`);
+  check(/read the distribution, not one run/.test(seedTxt) && /median/.test(seedTxt) && /found with accounts named in \d+ of 30 seeds/.test(seedTxt), `${tag}: seed study states the single-run caveat, shows medians and the one pass/fail line`);
   const tr = await page.locator('#trap-rates').innerText();
   check(/not pass or fail/.test(tr) && (tr.match(/\d+%/g) || []).length === 3, `${tag}: trap rates shown as three percentages, labelled not pass or fail`);
   check(/Share of cases matching a planted episode/.test(seedTxt) && !/precision/i.test(await page.locator('#seed-host').evaluate((e) => e.textContent)), `${tag}: seed strips use case-level shares`);
@@ -241,22 +256,33 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   check(dots >= 90, `${tag}: seed study draws a dot per seed per measure (${dots})`);
   check(await page.locator('#seed-table tbody tr').count() === 30, `${tag}: seed table has 30 rows`);
   const lg = await page.locator('#sweep-legend').innerText();
-  check(/Episodes found cleanly/.test(lg) && /found, diluted/.test(lg) && /Designed-trap cases/.test(lg) && /Unrelated cases/.test(lg), `${tag}: sweep plots clean and diluted finds, trap cases and unrelated cases`);
+  check(/accounts named/.test(lg) && /found, diluted/.test(lg) && /Price move flagged, no accounts named/.test(lg) && /Designed-trap cases/.test(lg) && /Unrelated cases/.test(lg), `${tag}: sweep plots clean and diluted finds, trap cases and unrelated cases`);
   await page.selectOption('#explorer-param', 'linkagePolicy');
   check(await page.locator('#sweep-host svg').count() === 1 && await page.locator('#linkage-effects tbody tr').count() === 3, `${tag}: linkage sweep shows largest cluster and honest pairs merged for three policies`);
   const eff = await page.locator('#linkage-effects').innerText();
-  check(/Found cleanly/i.test(eff) && /Found diluted/i.test(eff) && /Unrelated cases/i.test(eff) && /Largest group/i.test(eff) && /False-linked pairs/i.test(eff) && /Accounts named per matching alert/i.test(eff), `${tag}: linkage effects table has clean and diluted finds, unrelated cases, largest cluster, false-linked pairs and accounts per matching alert`);
+  check(/Found, accounts named/i.test(eff) && /Found, diluted/i.test(eff) && /Price move flagged, no accounts named/i.test(eff) && /Unrelated cases/i.test(eff) && /Largest group/i.test(eff) && /False-linked pairs/i.test(eff) && /Accounts named per matching alert/i.test(eff), `${tag}: linkage effects table has clean and diluted finds, unrelated cases, largest cluster, false-linked pairs and accounts per matching alert`);
   check(await overflow(page) <= 0, `${tag}: no horizontal overflow after unlock (${await overflow(page)}px)`);
 
   // export
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
   const json = JSON.parse(fs.readFileSync(await dl.path(), 'utf8'));
-  check(json.modelVersion === ENG.MODEL_VERSION && json.alerts.length === N && json.score && json.score.caseSummary && Array.isArray(json.score.cases) && json.score.ruleLevel.overall.groups && json.score.selfMatchHygiene && json.simulator === cfg && json.schema === 'trade-surveillance-export-3', `${tag}: export follows the new score shape`);
+  check(json.modelVersion === ENG.MODEL_VERSION && json.alerts.length === N && json.score && json.score.caseSummary && Array.isArray(json.score.cases) && json.score.ruleLevel.overall.groups && json.score.selfMatchHygiene && json.simulator === cfg && json.schema === 'trade-surveillance-export-4', `${tag}: export follows the new score shape`);
   check(Array.isArray(json.seedStudy?.rows) && json.seedStudy.rows.length === 30, `${tag}: export includes the seed study`);
 
   await page.locator('#queue-body tr[data-id]').nth(1).click();
   await page.locator('#case-section').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(SHOTS, `${cfg}-${vpName}-case-revealed.png`), fullPage: true });
+
+  // loose linkage: price-only and diluted statuses appear in the scorecard exactly as the engine says
+  await page.locator('input[name="policy"][value="weak1"]').check();
+  const kinds = new Set(loose.score.cases.map((c) => c.kind));
+  const kindText = { episode: 'Planted episode, accounts named', 'diluted-episode': 'Planted episode, diluted', 'price-only-episode': 'Planted episode, price move only' };
+  const wanted = [...kinds].filter((k) => kindText[k]).map((k) => kindText[k]);
+  await page.waitForFunction((w) => { const t = document.querySelector('#cases-block')?.innerText || ''; return w.every((x) => t.includes(x)); }, wanted, { timeout: 15000 }).catch(() => {});
+  const lc = await page.locator('#cases-block').innerText();
+  check(wanted.every((x) => lc.includes(x)) && await page.locator('#cases-block table tbody tr').count() === loose.score.caseSummary.cases, `${tag}: loose linkage scorecard lists the engine's ${loose.score.caseSummary.cases} cases and kinds (${[...kinds].join(', ')})`);
+  await page.locator('input[name="policy"][value="weak2"]').check();
+  await waitCount(page, 'eq', N);
 
   // default-policy clusters are larger in 1.2.0: open the alert with the biggest one on the seed that has it
   let bestSeed = 1, bestAlert = null, bestN = -1;
@@ -276,13 +302,14 @@ async function runPage(browser, base, ENG, cfg, vpName) {
 
 (async () => {
   const ENG = await import(pathToFileURL(path.join(ROOT, 'engine', 'index.js')).href);
+  const LINKS = await import(pathToFileURL(path.join(ROOT, 'ui', 'links.js')).href);
   const port = await freePort();
   const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
   const base = `http://127.0.0.1:${port}`;
   const browser = await chromium.launch();
   try {
     await waitFor(`${base}/index.html`);
-    for (const cfg of ['equity', 'crypto']) for (const vp of ['desktop', 'mobile']) await runPage(browser, base, ENG, cfg, vp);
+    for (const cfg of ['equity', 'crypto']) for (const vp of ['desktop', 'mobile']) await runPage(browser, base, ENG, LINKS, cfg, vp);
 
     // landing page
     const ctx = await browser.newContext({ viewport: VIEWPORTS.mobile, deviceScaleFactor: 1 });
@@ -294,6 +321,8 @@ async function runPage(browser, base, ENG, cfg, vpName) {
     check(lerr.length === 0, 'landing: no console errors');
     check(await lp.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'landing: no horizontal overflow at 390 px');
     check(!OLD_WORDS.test(await lp.locator('body').innerText()), 'landing: no retired wording');
+    check(await lp.locator('a[data-link="case-equity"]').getAttribute('href') === LINKS.CASE_STUDY_URLS.equity && await lp.locator('a[data-link="case-crypto"]').getAttribute('href') === LINKS.CASE_STUDY_URLS.crypto, 'landing: both per-market case-study links are set');
+    check(/easier than a real one/.test(await lp.locator('#num-h').evaluate((h) => h.parentElement.textContent)), 'landing: the numbers paragraph carries the planted-is-easier caveat');
     check(await lp.locator('a[data-link="source"]').getAttribute('href') === 'https://github.com/alfajr666/trade-surveillance-simulator', 'landing: source link is the configured constant');
     await lp.screenshot({ path: path.join(SHOTS, 'index-mobile.png'), fullPage: true });
     await lp.setViewportSize(VIEWPORTS.desktop);

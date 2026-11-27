@@ -1,11 +1,11 @@
 # Trade-surveillance simulator: engine contract
 
-Model `surv-model-1.2.0`. Plain ES modules, zero dependencies, no build step, no DOM, no `Math.random`, no `Date.now`.
+Model `surv-model-1.2.1`. Plain ES modules, zero dependencies, no build step, no DOM, no `Math.random`, no `Date.now`.
 All data is synthetic; company and token names are fictional (equity codes end in `.SIM`, crypto in `-SIMU`). The viewpoint is an
 exchange surveillance desk with full account-level data. Alerts are leads for a human to review; nothing here says a participant
 did something wrong.
 
-`npm test` (Node 20+, 111 tests, about 8 s). `npm run seeds` prints the 100-seed study as markdown (`-- --policy weak1`, `-- --baseline trailing`, `-- --n 50`).
+`npm test` (Node 20+, 113 tests, about 8.5 s). `npm run seeds` prints the 100-seed study as markdown (`-- --policy weak1`, `-- --baseline trailing`, `-- --n 50`).
 
 ## API
 
@@ -19,11 +19,12 @@ import { runScenario, sweep, seedStudy, linkageComparison, caseView, detect, det
 | `runScenario(configId, {seed?, thresholds?, linkagePolicy?, fresh?})` | one full result (below). `configId` is `'equity'` or `'crypto'`. Defaults: seed 1, `'weak2'`, `DEFAULTS.thresholds[configId]` with `thresholds` merged over it. **Unknown threshold keys throw**, as do bad `p1Mode` / `p1Baseline` values. The result is deep-frozen. |
 | `sweep(configId, param, values, baseOpts?)` | `{configId, param, seed, rows}`; `param` is a threshold key or `'linkagePolicy'`. Row shape below. |
 | `linkageComparison(configId, baseOpts?)` | `sweep` over `strong1, weak2, weak1`. |
-| `seedStudy(configId, seeds, opts?)` | `{configId, seeds, opts, rows, summary, trapRates, targetsPassing, failures}`. `summary[column] = {median,min,max}`. `targetsPassing` = seeds where both planted episodes were found cleanly; `failures = [{seed, failed, episodesFound, episodesDiluted}]`; `trapRates = {explainableAlert, shockAlertsOnP1, shockAlertsOnP2}` (share of seeds where each designed trap fired). |
+| `seedStudy(configId, seeds, opts?)` | `{configId, seeds, opts, rows, summary, trapRates, targetsPassing, failures}`. `summary[column] = {median,min,max}`. `targetsPassing` = seeds where both planted episodes were found cleanly; `failures = [{seed, failed, episodesFound, episodesDiluted, episodesPriceOnly}]`; per-rule columns `w2Found`, `p1PriceOnly` (P1 only ever flags the move), `p2Found`; `trapRates = {explainableAlert, shockAlertsOnP1, shockAlertsOnP2}` (share of seeds where each designed trap fired). |
 | `caseView(result, alertId)` | case-file view model (below). |
 | `detect({market, register, trades, thresholds, linkagePolicy})` | `{alerts, linkage}` on any tape, including hand-built ones. |
 | `detectionContext({market, trades})` | what the rules see: `{market, trades, prep, tradesByInst}`. Nothing from the scenario or ground truth (a test pins this). |
-| `detectionTargets(result)` | `{bothEpisodesFound, all, traps:{explainableAlert, shockAlertsOnP1, shockAlertsOnP2}}`. The only pass/fail target is `bothEpisodesFound` (`all` equals it); `traps` is information. |
+| `detectionTargets(result)` | `{bothEpisodesFound, all, traps:{explainableAlert, shockAlertsOnP1, shockAlertsOnP2}}`. The only pass/fail target is `bothEpisodesFound` = both planted episodes are `clean` (a rule that names accounts, W2 or P2, matches with accountPrecision >= 0.5); a pump flagged only by P1 is `priceOnly`, not clean. `all` equals it; `traps` is information. |
+| `tellStudy(configId, seeds)` | `{configId, seeds, register:[{rule, target:'ringPump'\|'makerSubs', flagged, precision, recall, baseRate}], tape:{method, busiestInstrumentShare, medians}}`: measured tells that separate planted accounts from honest ones, pooled over `seeds` (see "Register tells and tape tells"). Disclosure, not a detector. |
 | `checkInvariants(result)` | recomputes positions and cash from the tape. Healthy: `crossedBookEvents`, `badAccounts`, `nonIntegerOrNonPositive`, `ledgerMismatch` 0, `cashSum` 0, every `positionSumByInstrument` value 0. |
 | `clearCache()` | drops cached simulations. |
 
@@ -89,12 +90,12 @@ alert counts are detail.
 ```js
 score = { overall, byRule:{W2,P1,P2}, selfMatch, caseSummary, cases, byEpisode, decoysAlerted:[ids], causes, causesByRule, labels }
 labels[alertId] = {label:'MATCH'|'MATCH_DILUTED'|'EXPLAINABLE'|'UNRELATED'|'SELF_MATCH', episodeIds, cause, decoyIds, accountPrecision}
-caseSummary = { cases, episodeCases, dilutedEpisodeCases, trapCases, explainableCases, unrelatedCases,
-                shareMatchingEpisode, shareMatchingOrExplainable, episodesFound, episodesMissed }
-cases[] = { id, kind:'episode'|'diluted-episode'|'trap'|'unrelated', key, episodeId, decoyId, instrument, rules, alertIds, explainable }
+caseSummary = { cases, episodeCases, dilutedEpisodeCases, priceOnlyEpisodeCases, trapCases, explainableCases, unrelatedCases,
+                shareMatchingEpisode, shareMatchingOrExplainable, episodesFound, episodesPriceOnly, episodesMissed }
+cases[] = { id, kind:'episode'|'diluted-episode'|'price-only-episode'|'trap'|'unrelated', key, episodeId, decoyId, instrument, rules, alertIds, explainable }
 overall | byRule[r] = { alerts:{total,match,matchDiluted,explainable,unrelated}, groups:{total,episodeMatches,diluted,explainable,unrelated},
-                        episodes:{planted,found,diluted,missed}, precision:{alert:{match,matchOrExplainable}, group:{...}}, recall }
-byEpisode = [{episodeId, type, detectedBy:[rules with a MATCH], status:'found'|'diluted'|'missed', missed}]
+                        episodes:{planted,found,diluted,priceOnly,missed}, precision:{alert:{match,matchOrExplainable}, group:{...}}, recall }
+byEpisode = [{episodeId, type, detectedBy:[rules with a MATCH], status:'clean'|'diluted'|'priceOnly'|'missed', missed}]      // missed = status 'missed'
 selfMatch = {alerts, onPlantedAccounts, onHonestAlgoAccounts, onOtherAccounts, accountsFlagged, note}
 ```
 - `MATCH`: maps to a planted episode (same instrument, overlapping half-open window, rule type fits; W2 needs 2 episode accounts, P2 1, P1 none) **and** `accountPrecision`
@@ -103,14 +104,15 @@ selfMatch = {alerts, onPlantedAccounts, onHonestAlgoAccounts, onOtherAccounts, a
 - `EXPLAINABLE`: a W2 alert whose accounts are all one maker's sub-accounts, in the instrument and time of a same-owner cross (cause `same-owner-cross`; needs a documented explanation).
 - `UNRELATED` causes: `benign-shock`, `benign-burst` (seed-drawn honest momentum burst), `block-trade` (seed-drawn honest block order), `honest-linked-trading` (alert accounts all inside one
   honest group), `coincidental-link` (inside the single-attribute honest pair), `background-collision` (a cluster of honest accounts), `natural-move` (P1, no cause), `unattributed`.
-- Cases: one per planted episode found by any pattern rule (`episode` if some alert is MATCH, else `diluted-episode`), one per designed trap that alerted (by decoy id), one per unrelated cluster
-  (instrument + cluster id + merged overlapping windows; P1 uses cluster `-`). `episodesFound` = clean finds; diluted finds are `dilutedEpisodeCases`; `episodesMissed` = not found at all.
+- Episode status: `clean` = a rule that names accounts (W2 or P2) has a MATCH alert; `diluted` = such a rule matches only with accountPrecision < 0.5; `priceOnly` = only P1 matched (the move was flagged, nobody was named); `missed`. Order of precedence: clean, diluted, priceOnly, missed. In `byRule`, P1's finds are always `priceOnly`, so `byRule.P1.recall` is 0 by construction.
+- Cases: one per planted episode found by any pattern rule (`episode` if clean, `diluted-episode`, or `price-only-episode`), one per designed trap that alerted (by decoy id), one per unrelated cluster
+  (instrument + cluster id + merged overlapping windows; P1 uses cluster `-`). `episodesFound` = clean finds; diluted and price-only finds are reported separately (`dilutedEpisodeCases`, `priceOnlyEpisodeCases`); `episodesMissed` = not found at all.
   `shareMatchingEpisode = episodeCases / cases`; `shareMatchingOrExplainable = (episodeCases + explainableCases) / cases`. Recall = clean finds / planted.
 - Rule-level groups: MATCH by (rule, episode), EXPLAINABLE by (rule, decoy id), UNRELATED by (rule, instrument, cluster, merged window). Precision is `match` = MATCH / all and `matchOrExplainable`.
 
 ### Sweep rows
 
-`{value, caseSummary, episodesFound, episodesDiluted, episodesMissed, decoysAlerted, groups, alerts, precision, recall, overall, byRule, selfMatch, causes, linkage?}`. Chart `caseSummary`,
+`{value, caseSummary, episodesFound, episodesDiluted, episodesPriceOnly, episodesMissed, decoysAlerted, groups, alerts, precision, recall, overall, byRule, selfMatch, causes, linkage?}`. Chart `caseSummary`,
 `episodesFound` and `decoysAlerted`, not raw alert counts. For `'linkagePolicy'`, `linkage = {clusters, largestCluster, ringFragments, ringWhole, falseLinkFormed, designedPairsLinked,
 falseLinkedPairs, meanAccountsPerMatchingAlert, falseLinkAlerts}`; `falseLinkedPairs` counts pairs of unrelated honest accounts sharing a cluster (designed honest groups included: 23 at the default policy).
 
@@ -172,7 +174,7 @@ time; 0-2 honest momentum bursts and 0-2 block orders in the control instruments
 | | Equity (lot 100, tick units, daily band +-20% of previous close for limit and market orders; stale resting orders outside a new band are cancelled; "loosely after Indonesian market conventions") | Crypto (continuous, no band, finer tick) |
 |---|---|---|
 | Steps | 6 sessions x 60 steps of 5 min, bin 30 min; session 0 clean | 360 steps of 15 s, bin 1 min; first 20 min clean |
-| Wash | QFRO.SIM steps 70-290, ring lots 3-9 (honest 1-6); 15% spoke-spoke crosses, 1% random self-cross, 8% one-sided market orders | AQRL-SIMU steps 90-230, ring lots 8-28 (honest 1-20) |
+| Wash | QFRO.SIM steps 70-290, ring lots 3-9 (honest retail orders 1-6 lots, ring mean trade size is still about twice the honest mean: see tape tells); 15% spoke-spoke crosses, 1% random self-cross, 8% one-sided market orders | AQRL-SIMU steps 90-230, ring lots 8-28 (honest 1-20; same caveat) |
 | Pump | VLDN.SIM: accumulate 60-150, ramp 150-240, distribute from 240 | BLXT-SIMU: accumulate 100-236, ramp 240-264 (signal at `episode.signalMs`), distribute from 264 |
 | Shock | TMRX.SIM +13% at step 200 | DRNO-SIMU +9% at step 150 |
 | Maker crosses | NBLE.SIM steps 140-141, 335 | ELVY-SIMU steps 190-191, 320 |
@@ -181,42 +183,69 @@ time; 0-2 honest momentum bursts and 0-2 block orders in the control instruments
 The retail crowd is scripted: a low-rate `ramp-interest` crowd during the ramp and a `promotion` crowd after it (equity steps 235-290, crypto 262-292). The pump group trades its ramp after
 the retail crowd within each step. The pump's profit from selling into the crowd is assumed by the scenario, not emergent.
 
-## Measured results (100 seeds, defaults; produced by `npm run seeds`)
+## Measured results (seeds 1-100, defaults, linkage `weak2`, warm-up baseline; `npm run seeds` reproduces them)
 
-Equity and crypto, linkage `weak2`, warm-up baseline.
+Everything below is re-measured with 1.2.1 (wash-episode window and stats now use the wash instrument only; episode statuses `clean`, `diluted`, `priceOnly`, `missed`).
 
-- **Detection.** Both planted episodes found cleanly in 100 of 100 seeds in each config (no failing seeds). Per rule: W2 and P1 find their episode in 100/100; P2 in 100/100 (equity) and 97/100 (crypto).
-- **Designed traps (reported, not required).** Explainable (same-owner cross) alert present: equity 95%, crypto 98%. Shock alert on P1: 100% / 100%. Shock alert on P2: 1% / 2%.
-- **Case level (shareMatchingEpisode = episode cases / cases).** Equity median 0.29 (min 0.18, max 0.50), crypto median 0.29 (0.17, 0.40); 8 distinct values in each; the most common value covers 27 / 29 of 100 seeds.
-  `shareMatchingOrExplainable` equity median 0.43 (0.27-0.75), crypto 0.50 (0.30-0.80). Cases per run: median 7 (equity 4-11, crypto 5-12): 2 episode cases, 1-3 trap cases, 0-7 unrelated cases.
-- **Where unrelated cases come from at the default policy.** Honest-linked trading, honest bursts and blocks, background collisions and natural moves, besides the shock; a test requires over 30% of unrelated alerts to be non-trap.
-- **Linkage table** (100 seeds, means):
+- **Detection (episode status at the default policy).**
+  - Equity: wash clean 100, pump clean 100 (diluted 0, priceOnly 0, missed 0). Both clean in 100 of 100 seeds. Per rule: W2 finds the wash 100/100 (clean); P1 flags the pump move in 100/100 (always `priceOnly` by itself); P2 names the pump cleanly in 100/100.
+  - Crypto: wash clean 100; pump clean 97, **diluted 3** (priceOnly 0, missed 0). Both clean in **97 of 100** seeds; failing seeds 31, 58 and 79: in each, P2 matched the pump but named a cluster in which fewer than half the accounts were pump accounts, so the find is `diluted`; P1 flagged the move in all three. Per rule: W2 100/100 clean; P1 flags the pump in 100/100; P2 97 clean, 3 diluted.
+  - Counting a P1-only flag as a clean find would have given 100/100 in crypto; it no longer does, and nothing was tuned to restore that.
+- **Designed traps (reported, not required; equity / crypto).** Explainable (same-owner cross) alert present 95% / 98%; shock alert on P1 100% / 100%; shock alert on P2 1% / 2%.
+- **Case level.** `shareMatchingEpisode` (episode cases / cases): equity median 0.29, min 0.18, max 0.50, 8 distinct values, most common value 0.29 in 27 of 100 seeds; crypto median 0.29, min 0.14, max 0.40, 9 distinct values, most common 27 of 100.
+  `shareMatchingOrExplainable`: equity median 0.43 (0.27-0.75), crypto 0.50 (0.29-0.80). Cases per run: median 7 (equity min 4, max 11; crypto 5-12): 2 episode cases, trap cases equity 1-2 and crypto 1-3, unrelated cases median 3 (0-7) in both.
+- **What governs the case-level share.** Almost all non-trap unrelated cases are W2 alerts on scripted crosses between linked honest accounts. The rate is set in the scenario: each of 9 honest groups crosses in a given seed with probability 0.5, in 1-2 episodes of 3-7 trades of 2-6 lots at a random instrument and time. Measured over 100 seeds, unrelated alerts by cause:
+  equity: honest-linked-trading 265, background-collision 26 (W2, clusters of honest accounts), benign-shock 101, benign-burst 0, block-trade 0, natural-move 0;
+  crypto: honest-linked-trading 200, background-collision 81, benign-shock 102, benign-burst 4, block-trade 0, natural-move 2.
+  Honest momentum bursts and block orders (0-2 each per seed, control instruments) therefore produce essentially no alerts. The share is governed by the scripted cross rate, not by emergent behaviour. Two calibration tests pin that rate as a scenario property
+  (`calibration.test.mjs`: over 30% of unrelated alerts at the default policy are not designed traps; `linkage.test.mjs`: default unrelated cases exceed strict by more than 0.3).
+- **Linkage table** (means per run; "both clean" = seeds out of 100):
 
-| config | policy | episodes found cleanly (of 2) | found diluted | W2 clean finds | unrelated cases | trap cases | largest cluster | false-linked pairs | accounts named per matching alert |
-|---|---|---|---|---|---|---|---|---|---|
-| equity | strong1 | 1.02 | 0.00 | 0.02 | 2.11 | 1.95 | 4.1 | 21.9 | 2.0 |
-| equity | weak2 | 2.00 | 0.00 | 1.00 | 2.91 | 1.95 | 4.6 | 25.4 | 3.7 |
-| equity | weak1 | 1.00 | 1.00 | 0.00 | 4.02 | 1.00 | 48.8 | 770.7 | 48.8 |
-| crypto | strong1 | 1.16 | 0.00 | 0.16 | 2.18 | 2.74 | 6.5 | 37.8 | 2.1 |
-| crypto | weak2 | 2.00 | 0.00 | 1.00 | 2.87 | 2.74 | 7.0 | 44.1 | 3.7 |
-| crypto | weak1 | 1.08 | 0.92 | 0.08 | 9.79 | 1.49 | 35.0 | 393.3 | 29.6 |
+| config | policy | clean | diluted | priceOnly | missed | both clean | unrelated cases | largest cluster | false-linked pairs | accounts named per matching alert |
+|---|---|---|---|---|---|---|---|---|---|---|
+| equity | strong1 | 1.02 | 0.00 | 0.00 | 0.98 | 2 | 2.11 | 4.1 | 21.9 | 2.0 |
+| equity | weak2 | 2.00 | 0.00 | 0.00 | 0.00 | 100 | 2.91 | 4.6 | 25.4 | 3.7 |
+| equity | weak1 | 0.00 | 1.01 | 0.99 | 0.00 | 0 | 4.02 | 48.8 | 770.7 | 48.8 |
+| crypto | strong1 | 1.16 | 0.00 | 0.00 | 0.84 | 16 | 2.18 | 6.5 | 37.8 | 2.1 |
+| crypto | weak2 | 1.97 | 0.03 | 0.00 | 0.00 | 97 | 2.87 | 7.0 | 44.1 | 3.7 |
+| crypto | weak1 | 0.33 | 1.25 | 0.42 | 0.00 | 2 | 9.98 | 35.0 | 393.3 | 29.5 |
 
-  Strict linkage misses the ring cleanly almost always and has fewer unrelated cases; the default pays a small alert cost for honest groups linked by weak attributes that trade each other; loose
-  linkage builds giant clusters, dilutes the planted alerts (found, diluted), loses the explainable alert (the maker cluster is no longer only the maker; trap rate 0% / 28%) and multiplies unrelated cases.
-- **Baseline.** The defaults coincide with the scenario's clean period. Pump found by P1 / shock alert on P1 (100 seeds; equity then crypto): warm-up default N 1.00 / 1.00 and 1.00 / 1.00; trailing default N 1.00 / 1.00 and 1.00 / 1.00;
-  warm-up with N spanning the episodes (55 / 80 bins) **0.92 / 0.00** and **1.00 / 0.01**; trailing with long N (30 / 40) 1.00 / 1.00 and 1.00 / 1.00. A long warm-up that spans the episodes also spans the shock, so it makes P1
-  less sensitive across the board (here it removes the shock alert and barely touches the pump); it is not specifically blind to the pump. Trailing is not contaminated in this scenario because the history before each planted episode is quiet.
-- **Wash ring share.** Ring internal quantity / instrument quantity over the episode window: equity median 0.42 (q10 0.36, q90 0.45), crypto 0.44 (0.32, 0.53), against a 0.25 alert threshold (ring windows peak higher).
-- **Pump ramp share.** Group share of aggressive buying from the P1 window start to ramp end (matching P2 alerts): equity median 0.60 (0.52-0.68), crypto 0.62 (0.50-0.75). Threshold 0.25.
-- **Self-match hygiene (W1).** Seeds with at least one alert on an honest algo account: 100 / 100 (about 5 alerts per run); seeds with an alert on a planted account: equity 62, crypto 30 (0.84 and 0.37 alerts per run). W1 is outside every headline figure.
-- **Register-only classifier bound.** Over 100 seeds, no register-only rule (cluster size >= k for k = 2..5 under each policy; "shares attribute X" for each attribute) identifies planted accounts (ring, pump, maker sub-accounts; base rate 0.18) with
-  pooled precision above 0.5; the highest are `device` in equity (0.383) and `deviceFingerprint` in crypto (0.405). Tested.
+  Strict linkage misses the ring cleanly almost always; loose linkage finds both cleanly in 0 (equity) and 2 (crypto) of 100 seeds (the rest are diluted or price-only), loses the explainable alert (rate 0% equity, 28% crypto) and multiplies unrelated cases.
+  The false-linked-pair counts include the designed honest groups (23 at the default policy).
+- **Baseline.** The defaults coincide with the scenario's clean period. Both clean (of 100) / pump move flagged by P1 / shock alert on P1, equity then crypto: warm-up default N 100 / 100 / 1.00 and 97 / 100 / 1.00; trailing default N 100 / 100 / 1.00 and 97 / 100 / 1.00;
+  warm-up with N spanning the episodes (55 / 80 bins) **92 / 92 / 0.00** and **97 / 100 / 0.01**; trailing with long N (30 / 40) 100 / 100 / 1.00 and 97 / 100 / 1.00. A long warm-up spans the shock as well as the pump, so it makes P1 less sensitive across the board
+  (here it removes the shock alert and costs the equity pump 8 of 100 seeds); it is not specifically blind to the pump. (Crypto's 97 is the three diluted seeds, unrelated to the baseline.) Trailing is not contaminated here because the history before each planted episode is quiet.
+- **Wash ring share.** Ring internal quantity / instrument quantity over the (wash-instrument) episode window: equity median 0.43 (q10-q90 0.38-0.48; min-max 0.35-0.51); crypto median 0.49 (q10-q90 0.43-0.57; min-max 0.38-0.65). The alert threshold is 0.25 (ring windows peak higher). The ring's side-volume share is at most 1 by construction after the 1.2.1 fix (it reached 1.005 before).
+- **Pump ramp share** (group share of aggressive buying from the P1 window start to ramp end, matching P2 alerts; n = 100 equity, 97 crypto): equity median 0.60 (q10-q90 0.53-0.68; min-max 0.47-0.75); crypto median 0.62 (q10-q90 0.50-0.75; min-max 0.45-0.83). Threshold 0.25.
+- **Self-match hygiene (W1).** Honest algo accounts alert in 100 of 100 runs (alerts per run, all accounts: equity median 6, range 2-11; crypto median 5, range 1-9). Planted accounts alert in 62 (equity) and 30 (crypto) of 100 runs. W1 is outside every headline figure.
+
+## Register tells and tape tells (disclosure; `tellStudy`)
+
+The register is not an answer key for simple rules (cluster size, "shares attribute X"), but it is not secret either. Measured over 100 seeds, target = wash ring + pump group accounts (base rate 0.14); maker sub-accounts are scored as a separate target
+(no register rule exceeds precision 0.282 on them). Precision / recall, equity then crypto:
+
+| register rule | equity | crypto |
+|---|---|---|
+| default-policy cluster holds a strong link and a weak-only link | 0.795 / 1.00 | 0.620 / 1.00 |
+| has a strong partner and a weak-only partner (default policy) | 0.810 / 0.30 | 0.715 / 0.29 |
+| default-policy cluster size >= 3 | 0.319 / 1.00 | 0.276 / 1.00 |
+| strict-policy cluster size >= 3 | 0.173 / 0.43 | 0.147 / 0.43 |
+| shares the most identifying weak attribute (`device` / `deviceFingerprint`) | 0.383 / 0.61 | 0.405 / 0.60 |
+| shares two or more attributes with one other account | 0.315 / 0.69 | 0.294 / 0.60 |
+| an attribute value used by exactly 2 accounts | 0.265 / 0.68 | 0.276 / 1.00 |
+| shares a value that is not from a background pool | 0.218 / 0.96 | 0.210 / 0.99 |
+
+The strongest structural tell is the planted mix of strong links (spokes, pump pair) with weak-only links (hub, third pump member). The 1.1.0 claim that no register rule exceeds 0.405 was wrong and is withdrawn; the roster test now pins these values within 0.02.
+
+Tape tell (busiest-instrument share). Method: makers excluded by register type (`market_maker`), each account's trades counted on both sides, at least 20 trades, flag when the busiest instrument holds at least 0.65 of the account's quantity; target ring + pump accounts. Equity precision 1.00, recall 0.98;
+crypto precision 0.99, recall 0.87. Medians over qualifying accounts, planted vs honest: busiest-instrument share 0.83 vs 0.34 (equity) and 0.77 vs 0.43 (crypto); top-counterparty share 0.32 vs 0.20 (both); mean trade size 3.2 vs 1.4 lots (equity) and 6.7 vs 2.8 lots (crypto), so planted accounts trade about 2.2x and 2.4x the honest mean size.
+The planted accounts' order sizes overlap the honest range, but their means do not; the earlier statement that sizes "overlap" refers to the range only.
 
 ## Notes on behaviour you may see in charts
 
 - Sweeps can look non-monotonic at alert level because raising a threshold can split one merged run into two alerts; chart cases and episodes.
-- A one-step news jump can outscore a multi-bin pump ramp on `moveScore`: P1 is blind to cause.
-- The W2 sweep on `w2InstrumentShare`: the ring (about 0.4 of the instrument over the episode, higher in its peak window) and the same-owner crosses (higher still) are not separated by this parameter; a strict value loses the ring first.
+- A one-step news jump can outscore a multi-bin pump ramp on `moveScore`: P1 is blind to cause, and blind to who traded.
+- The W2 sweep on `w2InstrumentShare`: the ring (about 0.43-0.49 of the instrument over the episode, higher in its peak window) and the same-owner crosses (higher still) are not separated by this parameter; a strict value loses the ring first.
 - Calibration is by seed scan, not by a claim that every seed holds.
 
 ## What this does not model, and what is still easy by design
@@ -224,23 +253,34 @@ Equity and crypto, linkage `weak2`, warm-up baseline.
 - No real exchange rules (band, lot, tick are simplified); no auctions, halts, other order types, self-trade prevention, margin, fees, settlement, cross-venue or derivatives activity.
 - No spoofing, layering, marking the close, front-running or insider information. Counterparty-concentration and behavioural-similarity rules are absent.
 - One wash episode and one pump episode per config; timing resolution is one bin; agents are simple rules with random draws; price formation is a stylised random-walk fair value that quotes drift towards.
-- Linkage uses register attributes only. The register is no longer an answer key (see the classifier bound) but honest structure is generated by a handful of group types.
-- Remaining contrivances, with measured values: the wash ring still trades only inside the spread at a steady rate and ends near flat (ring side volume 0.93-0.95 internal); its hub is reachable only through two weak
-  attributes (that is the strict-linkage result, by design); the promotion and ramp-interest crowds are scripted; the pump group's profit is assumed; planted accounts' cover activity is a fixed fraction of retail rate;
-  the baseline period is clean by construction (the measured consequence of contaminating it is above); the scenario sets honest volume in the wash target so the ring is 0.42-0.44 of its quantity at the median.
+- Remaining tells, with measured values (disclosed, not hidden): the register tells above (mixed strong and weak-only clusters, 0.795 / 0.620 precision at recall 1.0); the tape tell (busiest-instrument share, 1.00 / 0.98 equity, 0.99 / 0.87 crypto); planted accounts' larger mean trade size (about 2.2-2.4x honest);
+  the ring trades only inside the spread at a steady rate and ends near flat; the hub is reachable only through two weak attributes (the strict-linkage result, by design); the retail crowds are scripted and the pump's profit is assumed; the baseline period is clean by construction;
+  the honest cross rate that drives the unrelated cases is a scenario parameter; the scenario sets honest volume in the wash target so the ring is 0.43-0.49 of its quantity at the median.
 - Floats are used for sampling and statistics; money (prices, quantities, notional, cash, P&L) is integer.
 
 ## Statements a write-up must include
 
-1. Both planted episodes found cleanly at default settings: 100/100 seeds in equity and 100/100 in crypto (seeds 1-100; P2 alone 100 and 97).
+1. Detection (seeds 1-100, defaults): equity both episodes clean in 100/100 (wash 100 clean; pump 100 clean; per rule W2 100, P1 flags the move 100 but is price-only on its own, P2 100 clean). Crypto both clean in **97/100** (wash 100 clean; pump 97 clean, 3 diluted: seeds 31, 58, 79; priceOnly 0; missed 0; W2 100, P1 flags 100, P2 97 clean + 3 diluted).
 2. Traps are reported, not required: explainable alert 95% / 98%, shock alert on P1 100% / 100%, on P2 1% / 2% (equity / crypto).
-3. Case level: shareMatchingEpisode median 0.29 / 0.29 (min 0.18 / 0.17, max 0.50 / 0.40); varies across seeds (8 distinct values; no value in more than 29 of 100 seeds). shareMatchingOrExplainable median 0.43 / 0.50.
-4. Linkage (table above): strict finds the ring cleanly in 2% / 16% of seeds, loose in 0% / 8% with the rest diluted (episodes found diluted 1.00 / 0.92 per run), largest cluster 48.8 / 35.0 accounts, false-linked pairs 771 / 393, unrelated cases 4.0 / 9.8 versus 2.9 / 2.9 at default.
-5. Baseline: contaminated warm-up (N spanning the episodes) leaves the pump found by P1 at 0.92 / 1.00 but the shock alert at 0.00 / 0.01; trailing and clean warm-up 1.00 / 1.00 for both.
-6. Ring internal share of instrument quantity: median 0.42 / 0.44. Pump ramp share of aggressive buying: median 0.60 / 0.62.
-7. Self-match hygiene: honest algo accounts alert in every run; planted accounts in 62% / 30% of runs; excluded from all headline figures.
-8. Register-only classifiers: pooled precision for planted accounts never above 0.405 (base rate 0.18).
-9. What stays contrived: scripted crowds, assumed pump profit, clean baseline period, weak-only hub, steady-rate ring trading (see limits).
+3. Case level: shareMatchingEpisode median 0.29 / 0.29, min 0.18 / 0.14, max 0.50 / 0.40; 8 / 9 distinct values; most common value in 27 / 27 of 100 seeds. shareMatchingOrExplainable median 0.43 / 0.50. It is governed by the scripted honest-cross rate (each of 9 honest groups crosses with probability 0.5 per seed, 1-2 episodes of 3-7 trades): of 100 seeds' unrelated alerts, equity 291 are W2 on honest accounts (265 honest-linked, 26 collision) vs 101 shock, 0 bursts, 0 blocks; crypto 281 vs 102 shock, 4 bursts, 0 blocks, 2 natural moves.
+4. Linkage (table above): strict finds both cleanly in 2 / 16 seeds; loose in 0 / 2 (equity 1.01 diluted and 0.99 price-only per run; crypto 1.25 diluted and 0.42 price-only); largest cluster 48.8 / 35.0 accounts; false-linked pairs 771 / 393; unrelated cases 4.0 / 10.0 versus 2.9 / 2.9 at default; accounts named per matching alert 48.8 / 29.5 versus 3.7 / 3.7.
+5. Baseline: warm-up spanning the episodes leaves both-clean at 92 (equity) / 97 (crypto) of 100, pump move flagged 92 / 100, shock alert 0.00 / 0.01; trailing and clean warm-up keep the shock alert at 1.00. P1 becomes less sensitive across the board.
+6. Ring internal share of instrument quantity: median 0.43 (q10-q90 0.38-0.48; min-max 0.35-0.51) equity, 0.49 (0.43-0.57; 0.38-0.65) crypto. Pump ramp share: median 0.60 (q10-q90 0.53-0.68; min-max 0.47-0.75) equity, 0.62 (0.50-0.75; 0.45-0.83) crypto.
+7. Self-match hygiene: honest algo accounts alert in 100/100 runs; planted accounts in 62 (equity) / 30 (crypto) of 100 runs; excluded from all headline figures.
+8. Register tells: a default-policy cluster holding both a strong and a weak-only link identifies ring+pump accounts at precision 0.795 / 0.620 with recall 1.00 (base rate 0.14); other structural rules reach 0.2-0.8 (table). Maker sub-accounts are not singled out (precision at most 0.282).
+9. Tape tells: busiest-instrument share >= 0.65 (>= 20 trades, makers excluded by register type) identifies ring+pump accounts at precision 1.00 / 0.99 and recall 0.98 / 0.87; planted mean trade size is about 2.2x / 2.4x honest; top-counterparty share 0.32 vs 0.20.
+10. What stays contrived: the tells above, scripted crowds, assumed pump profit, clean baseline period, weak-only hub, steady-rate ring trading, a scenario-set honest cross rate.
+
+## Changes from 1.2.0 (UI migration list)
+
+- `MODEL_VERSION` `surv-model-1.2.1`; `package.json` version 1.2.1.
+- Bug fix: wash episode window, `plantedTradeIds` and stats use only ring-to-ring trades in the wash instrument (cover activity elsewhere no longer stretches the window). Values change slightly (seed 1 equity ring share 0.340 -> 0.376, crypto 0.570 -> 0.569).
+- Episode status values: `byEpisode[i].status` `found` -> `clean`; new `priceOnly`; `diluted` and `missed` unchanged. `missed` is true only for status `missed`.
+- `episodes` objects (in `overall`, `byRule[r]`) gain `priceOnly`: `{planted, found, diluted, priceOnly, missed}`; `found` means clean (a rule naming accounts matched). P1 finds are `priceOnly`, so `byRule.P1.episodes.found` and `byRule.P1.recall` are always 0.
+- `caseSummary` gains `priceOnlyEpisodeCases`, `episodesPriceOnly`; `episodesMissed` excludes price-only finds. `cases[].kind` gains `'price-only-episode'`. `shareMatchingEpisode` counts clean episode cases only.
+- `detectionTargets().bothEpisodesFound` = both episodes clean. `seedStudy`: rows gain `episodesPriceOnly`, `priceOnlyEpisodeCases`; `p1Found` renamed `p1PriceOnly`; `failures[i]` gains `episodesPriceOnly`; `targetsPassing` counts both clean. Sweep rows gain `episodesPriceOnly`.
+- New export `tellStudy(configId, seeds, opts?)` (new module `engine/tells.js`) and its output shape.
+- `scripts/seeds.mjs` prints the new columns. The 1.1 register-classifier test is replaced by tests that pin the measured tells.
 
 ## Changes from 1.1.0 (UI migration list)
 

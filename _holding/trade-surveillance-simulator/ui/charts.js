@@ -313,6 +313,7 @@ export function lineChart({ points, series, currentX, xLabel, yLabel, categorica
   // direct labels at the right edge, nudged apart
   const labs = series.map((se) => ({ se, y: y(se.values[n - 1]) })).sort((a, b) => a.y - b.y);
   for (let i = 1; i < labs.length; i++) if (labs[i].y - labs[i - 1].y < 13) labs[i].y = labs[i - 1].y + 13;
+  if (labs.length) { const maxY = t + ph + 2; if (labs[labs.length - 1].y > maxY) labs[labs.length - 1].y = maxY; for (let i = labs.length - 2; i >= 0; i--) if (labs[i + 1].y - labs[i].y < 13) labs[i].y = labs[i + 1].y - 13; }
   for (const lb of labs) s += `<text class="series-label" x="${l + pw + 9}" y="${r1(lb.y) + 4}">${esc(lb.se.short || lb.se.label)}</text>`;
   s += `<line class="hover-line" visibility="hidden" y1="${t - 4}" y2="${t + ph}"/></svg>`;
   const cols = points.map((p, i) => ({ x: px(i), html: `<strong>${esc(xLabel)}: ${esc(p.label)}</strong>${series.map((se) => `<br>${esc(se.label)}: ${se.values[i]}`).join('')}` }));

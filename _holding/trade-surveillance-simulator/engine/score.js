@@ -15,7 +15,7 @@ export function buildGroundTruth(scn, sim) {
 
   // wash ring episode (window taken from the actual internal trades)
   const ring = new Set(scn.ring.accts);
-  const wash = trades.filter((t) => ring.has(t.buyAcct) && ring.has(t.sellAcct));
+  const wash = trades.filter((t) => t.inst === T.washInstrument && ring.has(t.buyAcct) && ring.has(t.sellAcct));   // wash instrument only: cover activity elsewhere is not the episode
   const wStart = wash[0].t, wEnd = wash[wash.length - 1].t + 1;
   const washInstQty = trades.filter((t) => t.inst === T.washInstrument && t.t >= wStart && t.t < wEnd).reduce((s, t) => s + t.qty, 0);
   const internalQty = wash.reduce((s, t) => s + t.qty, 0);
@@ -175,6 +175,23 @@ function mergedCount(items, keyOf) {
 }
 const clusterKey = (a) => (a.cluster ? a.cluster.id : '-');
 
+/**
+ * Episode status from a set of alerts. `clean`: a rule that names accounts (W2, P2) matches with accountPrecision >= 0.5.
+ * `diluted`: such a rule matches but names mostly honest accounts. `priceOnly`: only P1 matched (the move was flagged, nobody was named).
+ * `missed`: nothing matched.
+ */
+function episodeStatuses(list, labels, planted) {
+  const out = {};
+  for (const e of planted) {
+    const mine = list.filter((a) => labels[a.id].episodeIds.includes(e.id));
+    const naming = mine.filter((a) => a.rule !== 'P1');
+    out[e.id] = naming.some((a) => labels[a.id].label === 'MATCH') ? 'clean'
+      : naming.some((a) => labels[a.id].label === 'MATCH_DILUTED') ? 'diluted'
+        : mine.some((a) => a.rule === 'P1') ? 'priceOnly' : 'missed';
+  }
+  return out;
+}
+
 /** Alert-level and rule-level group counts for a set of alerts. */
 function summarize(list, labels, plantedEpisodes) {
   const count = (l) => list.filter((a) => labels[a.id].label === l).length;
@@ -187,27 +204,28 @@ function summarize(list, labels, plantedEpisodes) {
   }
   const unrelatedGroups = mergedCount(list.filter((a) => labels[a.id].label === 'UNRELATED'), (a) => `${a.rule}|${a.instrument}|${clusterKey(a)}`).length;
   const groups = { total: keys.MATCH.size + keys.MATCH_DILUTED.size + keys.EXPLAINABLE.size + unrelatedGroups, episodeMatches: keys.MATCH.size, diluted: keys.MATCH_DILUTED.size, explainable: keys.EXPLAINABLE.size, unrelated: unrelatedGroups };
-  const clean = new Set(list.filter((a) => labels[a.id].label === 'MATCH').flatMap((a) => labels[a.id].episodeIds));
-  const dil = new Set(list.filter((a) => labels[a.id].label === 'MATCH_DILUTED').flatMap((a) => labels[a.id].episodeIds).filter((e) => !clean.has(e)));
-  const episodes = { planted: plantedEpisodes.length, found: clean.size, diluted: dil.size, missed: plantedEpisodes.length - clean.size - dil.size };
+  const st = episodeStatuses(list, labels, plantedEpisodes);
+  const count2 = (k) => Object.values(st).filter((x) => x === k).length;
+  const episodes = { planted: plantedEpisodes.length, found: count2('clean'), diluted: count2('diluted'), priceOnly: count2('priceOnly'), missed: count2('missed') };
   return {
     alerts, groups, episodes,
     precision: {
       alert: { match: ratio(alerts.match, alerts.total), matchOrExplainable: ratio(alerts.match + alerts.explainable, alerts.total) },
       group: { match: ratio(groups.episodeMatches, groups.total), matchOrExplainable: ratio(groups.episodeMatches + groups.explainable, groups.total) },
     },
-    recall: ratio(clean.size, plantedEpisodes.length),
+    recall: ratio(episodes.found, plantedEpisodes.length),
   };
 }
 
 /** Rule-agnostic cases: one per planted episode found, one per designed trap that alerted, one per unrelated cluster window. */
 function buildCases(pattern, labels, gt) {
   const list = [];
+  const status = episodeStatuses(pattern, labels, gt.episodes);
+  const KIND = { clean: 'episode', diluted: 'diluted-episode', priceOnly: 'price-only-episode' };
   for (const ep of gt.episodes) {
+    if (status[ep.id] === 'missed') continue;
     const mine = pattern.filter((a) => labels[a.id].episodeIds.includes(ep.id));
-    if (!mine.length) continue;
-    const clean = mine.some((a) => labels[a.id].label === 'MATCH');
-    list.push({ id: `CASE-${ep.id}`, kind: clean ? 'episode' : 'diluted-episode', key: ep.id, episodeId: ep.id, decoyId: null, instrument: ep.instrument,
+    list.push({ id: `CASE-${ep.id}`, kind: KIND[status[ep.id]], key: ep.id, episodeId: ep.id, decoyId: null, instrument: ep.instrument,
       rules: [...new Set(mine.map((a) => a.rule))].sort(), alertIds: mine.map((a) => a.id), explainable: false });
   }
   const trapOf = (a) => labels[a.id].decoyIds.find((id) => TRAP_TYPES.has(gt.decoys.find((d) => d.id === id)?.type));
@@ -228,10 +246,10 @@ function buildCases(pattern, labels, gt) {
   const n = (k) => list.filter((c) => c.kind === k).length;
   const total = list.length;
   const summary = {
-    cases: total, episodeCases: n('episode'), dilutedEpisodeCases: n('diluted-episode'), trapCases: n('trap'), explainableCases: list.filter((c) => c.kind === 'trap' && c.explainable).length, unrelatedCases: n('unrelated'),
+    cases: total, episodeCases: n('episode'), dilutedEpisodeCases: n('diluted-episode'), priceOnlyEpisodeCases: n('price-only-episode'), trapCases: n('trap'), explainableCases: list.filter((c) => c.kind === 'trap' && c.explainable).length, unrelatedCases: n('unrelated'),
     shareMatchingEpisode: ratio(n('episode'), total),
     shareMatchingOrExplainable: ratio(n('episode') + list.filter((c) => c.kind === 'trap' && c.explainable).length, total),
-    episodesFound: n('episode'), episodesMissed: gt.episodes.length - n('episode') - n('diluted-episode'),
+    episodesFound: n('episode'), episodesPriceOnly: n('price-only-episode'), episodesMissed: gt.episodes.length - n('episode') - n('diluted-episode') - n('price-only-episode'),
   };
   return { summary, list };
 }
@@ -260,16 +278,13 @@ export function scoreAlerts(alerts, gt) {
     causes[l.cause] = (causes[l.cause] || 0) + 1;
     const k = `${a.rule}:${l.cause}`; causesByRule[k] = (causesByRule[k] || 0) + 1;
   }
-  const byEpisode = gt.episodes.map((e) => {
-    const mine = pattern.filter((a) => labels[a.id].episodeIds.includes(e.id));
-    const clean = mine.some((a) => labels[a.id].label === 'MATCH');
-    return {
-      episodeId: e.id, type: e.type,
-      detectedBy: PATTERN_RULES.filter((r) => mine.some((a) => a.rule === r && labels[a.id].label === 'MATCH')),
-      status: clean ? 'found' : mine.length ? 'diluted' : 'missed',
-      missed: mine.length === 0,
-    };
-  });
+  const estatus = episodeStatuses(pattern, labels, gt.episodes);
+  const byEpisode = gt.episodes.map((e) => ({
+    episodeId: e.id, type: e.type,
+    detectedBy: PATTERN_RULES.filter((r) => pattern.some((a) => a.rule === r && labels[a.id].label === 'MATCH' && labels[a.id].episodeIds.includes(e.id))),
+    status: estatus[e.id],
+    missed: estatus[e.id] === 'missed',
+  }));
   const decoysAlerted = [...new Set(pattern.flatMap((a) => labels[a.id].decoyIds))].sort();
   const cases = buildCases(pattern, labels, gt);
   return { overall, byRule, selfMatch, caseSummary: cases.summary, cases: cases.list, byEpisode, decoysAlerted, causes, causesByRule, labels };

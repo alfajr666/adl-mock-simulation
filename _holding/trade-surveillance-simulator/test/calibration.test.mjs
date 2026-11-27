@@ -25,7 +25,7 @@ for (const id of CONFIG_IDS) {
 
   test(`${id} default seed: both episodes found cleanly by pattern rules`, () => {
     const r = runScenario(id, { seed: DEFAULTS.seed });
-    assert.deepEqual(r.score.byEpisode.map((e) => [e.type, e.status]), [['wash', 'found'], ['pump', 'found']]);
+    assert.deepEqual(r.score.byEpisode.map((e) => [e.type, e.status]), [['wash', 'clean'], ['pump', 'clean']]);
     assert.equal(r.score.overall.recall, 1);
     assert.equal(r.score.caseSummary.episodeCases, 2);
     assert.equal(r.score.caseSummary.dilutedEpisodeCases, 0);
@@ -78,8 +78,9 @@ for (const id of CONFIG_IDS) {
   test(`${id}: P1 sweep (p1MoveScore) loses the pump at a strict threshold`, () => {
     const s = sweep(id, 'p1MoveScore', [2, 5, 10, 14, 18, 25, 50, 100], { seed: 1 });
     const p1 = s.rows.map((r) => r.byRule.P1);
-    assert.equal(p1[0].episodes.found, 1);
-    assert.equal(p1.at(-1).episodes.found, 0);
+    assert.equal(p1[0].episodes.priceOnly, 1, 'P1 alone only ever flags the move: price-only');
+    assert.equal(p1[0].episodes.found, 0);
+    assert.equal(p1.at(-1).episodes.priceOnly, 0);
     assert.equal(p1.at(-1).groups.total, 0);
     assert.ok(p1.every((x, i) => i === 0 || x.alerts.total <= p1[i - 1].alerts.total), 'raising the threshold never adds P1 alerts');
   });
@@ -91,7 +92,7 @@ for (const id of CONFIG_IDS) {
     assert.equal(clean.trapRates.shockAlertsOnP1, 1);
     assert.equal(trail.trapRates.shockAlertsOnP1, 1);
     assert.ok(contaminated.trapRates.shockAlertsOnP1 <= 0.1, 'the long warm-up also removes the shock alert: P1 is less sensitive across the board');
-    assert.ok(mean(contaminated.rows.map((r) => r.p1Found)) <= mean(clean.rows.map((r) => r.p1Found)));
+    assert.ok(mean(contaminated.rows.map((r) => r.p1PriceOnly)) <= mean(clean.rows.map((r) => r.p1PriceOnly)));
   });
 
   test(`${id}: the sweep helper leaves defaults untouched and unknown thresholds throw`, () => {

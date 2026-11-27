@@ -20,7 +20,7 @@
 
     <div class="notice">
       <div><strong>Model boundary.</strong> Every market, account and trade is generated. Instruments and tokens are fictional, nothing reproduces a real venue’s rules, and an alert is a lead for a human to review, never a conclusion about anyone.</div>
-      <div class="acts"><a class="button ghost" data-link="case" target="_blank" rel="noreferrer">Case study</a><a class="button ghost" data-link="source" target="_blank" rel="noreferrer">Source</a></div>
+      <div class="acts"><a class="button ghost" data-link="case-equity" target="_blank" rel="noreferrer">Equity case study</a><a class="button ghost" data-link="case-crypto" target="_blank" rel="noreferrer">Crypto case study</a><a class="button ghost" data-link="source" target="_blank" rel="noreferrer">Source</a></div>
     </div>
 
     <section aria-labelledby="sims-h" class="section-gap">
@@ -54,7 +54,7 @@
 
     <section aria-labelledby="num-h" class="section-gap">
       <h2 id="num-h">What the numbers mean</h2>
-      <p class="muted" style="max-width:80ch;margin-top:10px">The scorecard counts cases, not alerts: one per planted episode found, one per designed trap that alerted, one per cluster of unrelated alerts. Both planted episodes are found cleanly at default settings in every seed from 1 to 100, by design, so the informative figures are how many other cases surround them (the share of cases that match a planted episode has a median of about 0.29) and how that moves with linkage, baseline and thresholds. They show how rules react to designed situations, not real-world detection performance, and several parts of the scenario, such as the scripted crowds and the clean baseline period, stay contrived.</p>
+      <p class="muted" style="max-width:80ch;margin-top:10px">A planted scenario is always easier than a real one, so these numbers show how rules react to designed situations, not how well they would detect abuse on a real market. The scorecard counts cases per synthetic run (one per planted episode, designed trap or cluster of unrelated alerts), and with two planted episodes a single run says little: read the distribution across seeds. Both episodes are found with accounts named in nearly every seed at default settings, by design, so the informative figures are how many other cases surround them (the share of cases matching a planted episode has a median of about 0.29), how that moves with linkage, baseline and thresholds, and the shortcuts, such as register and tape tells, that a real desk does not get. Scripted crowds and a clean baseline period stay contrived.</p>
     </section>
 
     <section aria-labelledby="how-h" class="section-gap">
@@ -70,8 +70,8 @@
     <p class="fineprint">Independent educational simulation · engine model <span id="model-version"></span> · <a data-link="home" target="_blank" rel="noreferrer">Delomite</a></p>
   </main>
   <script type="module">
-    import { CASE_STUDY_URL, SOURCE_URL, HOME_URL } from './ui/links.js';
-    const map = { case: CASE_STUDY_URL, source: SOURCE_URL, home: HOME_URL };
+    import { CASE_STUDY_URLS, SOURCE_URL, HOME_URL } from './ui/links.js';
+    const map = { 'case-equity': CASE_STUDY_URLS.equity, 'case-crypto': CASE_STUDY_URLS.crypto, source: SOURCE_URL, home: HOME_URL };
     for (const a of document.querySelectorAll('[data-link]')) a.href = map[a.dataset.link];
     import('./engine/index.js').then((m) => { document.getElementById('model-version').textContent = m.MODEL_VERSION; }).catch(() => {});
   </script>

@@ -48,12 +48,28 @@ test('accountPrecision: an alert naming mostly honest accounts is MATCH_DILUTED,
   assert.deepEqual([diluted.label, diluted.accountPrecision, diluted.episodeIds], ['MATCH_DILUTED', 0.25, ['EP-W']]);
   assert.equal(label(A('P1', 'Y', [], 6000, 7000)).accountPrecision, null);
   const s = scoreAlerts([A('W2', 'X', ['R1', 'R2', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'], 1000, 2000, 'CL-1')], gt);
-  assert.deepEqual(s.overall.episodes, { planted: 2, found: 0, diluted: 1, missed: 1 });
+  assert.deepEqual(s.overall.episodes, { planted: 2, found: 0, diluted: 1, priceOnly: 0, missed: 1 });
   assert.equal(s.overall.recall, 0, 'a diluted find is not a clean find');
   assert.equal(s.caseSummary.dilutedEpisodeCases, 1);
   assert.equal(s.caseSummary.episodeCases, 0);
   assert.equal(s.byEpisode[0].status, 'diluted');
   assert.equal(s.byEpisode[0].missed, false);
+});
+
+test('episode status: a pump seen only by P1 is priceOnly (nobody named); a naming rule makes it clean; diluted beats priceOnly', () => {
+  const p1Only = scoreAlerts([A('P1', 'Y', [], 6000, 7000)], gt);
+  assert.equal(p1Only.byEpisode[1].status, 'priceOnly');
+  assert.equal(p1Only.byEpisode[1].missed, false);
+  assert.deepEqual(p1Only.overall.episodes, { planted: 2, found: 0, diluted: 0, priceOnly: 1, missed: 1 });
+  assert.equal(p1Only.overall.recall, 0, 'a price-only find is not a clean find');
+  assert.deepEqual([p1Only.caseSummary.priceOnlyEpisodeCases, p1Only.caseSummary.episodeCases, p1Only.caseSummary.episodesPriceOnly, p1Only.caseSummary.episodesMissed], [1, 0, 1, 1]);
+  assert.equal(p1Only.cases[0].kind, 'price-only-episode');
+  assert.equal(p1Only.byRule.P1.episodes.priceOnly, 1);
+  const withP2 = scoreAlerts([A('P1', 'Y', [], 6000, 7000), A('P2', 'Y', ['P1', 'P2'], 6000, 9000, 'CL-P')], gt);
+  assert.equal(withP2.byEpisode[1].status, 'clean');
+  assert.deepEqual(withP2.byEpisode[1].detectedBy, ['P1', 'P2']);
+  const dil = scoreAlerts([A('P1', 'Y', [], 6000, 7000), A('P2', 'Y', ['P1', 'C1', 'C2', 'C3'], 6000, 9000, 'CL-P')], gt);
+  assert.equal(dil.byEpisode[1].status, 'diluted');
 });
 
 test('causes: same-owner cross is EXPLAINABLE only when every account is the maker group; others are UNRELATED with a cause', () => {
@@ -92,8 +108,8 @@ test('cases: one per episode found, one per designed trap that alerted (by decoy
   ];
   const s = scoreAlerts(alerts, gt);
   assert.deepEqual(s.caseSummary, {
-    cases: 7, episodeCases: 2, dilutedEpisodeCases: 0, trapCases: 2, explainableCases: 1, unrelatedCases: 3,
-    shareMatchingEpisode: 2 / 7, shareMatchingOrExplainable: 3 / 7, episodesFound: 2, episodesMissed: 0,
+    cases: 7, episodeCases: 2, dilutedEpisodeCases: 0, priceOnlyEpisodeCases: 0, trapCases: 2, explainableCases: 1, unrelatedCases: 3,
+    shareMatchingEpisode: 2 / 7, shareMatchingOrExplainable: 3 / 7, episodesFound: 2, episodesPriceOnly: 0, episodesMissed: 0,
   });
   assert.deepEqual(s.cases.filter((c) => c.kind === 'trap').map((c) => c.decoyId), ['DEC-MM-1', 'DEC-SHOCK-1']);
   assert.equal(s.cases.find((c) => c.kind === 'episode' && c.episodeId === 'EP-P').rules.join(','), 'P1,P2');
@@ -112,7 +128,7 @@ test('rule-level groups: duplicates of one episode are one group; explainable by
   assert.deepEqual(o.groups, { total: 6, episodeMatches: 2, diluted: 0, explainable: 1, unrelated: 3 });
   assert.equal(o.precision.alert.match, 4 / 9);
   assert.equal(o.precision.group.matchOrExplainable, 3 / 6);
-  assert.deepEqual(o.episodes, { planted: 2, found: 2, diluted: 0, missed: 0 });
+  assert.deepEqual(o.episodes, { planted: 2, found: 1, diluted: 0, priceOnly: 1, missed: 0 });   // the pump is seen only by P1 here
   const s = scoreAlerts(alerts, gt);
   assert.deepEqual(s.decoysAlerted, ['DEC-MM-1', 'DEC-SHOCK-1']);
 });

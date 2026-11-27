@@ -10,8 +10,9 @@ import { prepareBars, runRules } from './rules.js';
 import { buildGroundTruth, scoreAlerts, RULES, RULE_TARGETS, PATTERN_RULES } from './score.js';
 import { buildEquity } from './scenario-equity.js';
 import { buildCrypto } from './scenario-crypto.js';
+import { registerTellStudy, tapeTellStudy } from './tells.js';
 
-export const MODEL_VERSION = 'surv-model-1.2.0';
+export const MODEL_VERSION = 'surv-model-1.2.1';
 export { LINKAGE_POLICIES, RULES, RULE_TARGETS, PATTERN_RULES };
 
 const BUILDERS = { equity: buildEquity, crypto: buildCrypto };
@@ -210,7 +211,7 @@ function row(r) {
   const o = r.score.overall;
   return {
     caseSummary: r.score.caseSummary,
-    episodesFound: o.episodes.found, episodesDiluted: o.episodes.diluted, episodesMissed: o.episodes.missed,
+    episodesFound: o.episodes.found, episodesDiluted: o.episodes.diluted, episodesPriceOnly: o.episodes.priceOnly, episodesMissed: o.episodes.missed,
     decoysAlerted: r.score.decoysAlerted.length,
     groups: o.groups, alerts: o.alerts,
     precision: o.precision, recall: o.recall,
@@ -246,7 +247,8 @@ export function linkageComparison(configId, opts = {}) {
 }
 
 /**
- * Detection target: both planted episodes found cleanly by the pattern rules (not diluted).
+ * Detection target: both planted episodes found cleanly: a rule that names accounts (W2 or P2) matches each one with accountPrecision >= 0.5.
+ * A pump seen only by P1 is `priceOnly`, not clean.
  * The designed traps are reported, not required: `traps` says whether each fired in this run.
  */
 export function detectionTargets(r) {
@@ -280,8 +282,8 @@ export function seedStudy(configId, seeds, opts = {}) {
     const cs = r.score.caseSummary;
     rows.push({
       seed,
-      episodesFound: o.episodes.found, episodesDiluted: o.episodes.diluted, episodesMissed: o.episodes.missed,
-      cases: cs.cases, episodeCases: cs.episodeCases, dilutedEpisodeCases: cs.dilutedEpisodeCases, trapCases: cs.trapCases, unrelatedCases: cs.unrelatedCases,
+      episodesFound: o.episodes.found, episodesDiluted: o.episodes.diluted, episodesPriceOnly: o.episodes.priceOnly, episodesMissed: o.episodes.missed,
+      cases: cs.cases, episodeCases: cs.episodeCases, dilutedEpisodeCases: cs.dilutedEpisodeCases, priceOnlyEpisodeCases: cs.priceOnlyEpisodeCases, trapCases: cs.trapCases, unrelatedCases: cs.unrelatedCases,
       shareMatchingEpisode: cs.shareMatchingEpisode, shareMatchingOrExplainable: cs.shareMatchingOrExplainable,
       meanAccountsPerMatchingAlert: lk.meanAccountsPerMatchingAlert,
       groups: o.groups.total, groupsMatch: o.groups.episodeMatches, groupsExplainable: o.groups.explainable, groupsUnrelated: o.groups.unrelated,
@@ -289,7 +291,7 @@ export function seedStudy(configId, seeds, opts = {}) {
       precisionGroupMatch: o.precision.group.match, precisionGroupMatchOrExplainable: o.precision.group.matchOrExplainable,
       precisionAlertMatch: o.precision.alert.match, precisionAlertMatchOrExplainable: o.precision.alert.matchOrExplainable,
       recall: o.recall,
-      w2Found: r.score.byRule.W2.episodes.found, p1Found: r.score.byRule.P1.episodes.found, p2Found: r.score.byRule.P2.episodes.found,
+      w2Found: r.score.byRule.W2.episodes.found, p1PriceOnly: r.score.byRule.P1.episodes.priceOnly, p2Found: r.score.byRule.P2.episodes.found,
       selfMatchAlerts: r.score.selfMatch.alerts,
       largestCluster: lk.largestCluster, falseLinkedPairs: lk.falseLinkedPairs, ringFragments: lk.ringFragments,
       targets: t,
@@ -301,7 +303,7 @@ export function seedStudy(configId, seeds, opts = {}) {
     const v = rows.map((x) => x[c]).filter((x) => x !== null);
     summary[c] = { median: med(v), min: v.length ? Math.min(...v) : null, max: v.length ? Math.max(...v) : null };
   }
-  const failures = rows.filter((x) => !x.targets.all).map((x) => ({ seed: x.seed, failed: ['bothEpisodesFound'], episodesFound: x.episodesFound, episodesDiluted: x.episodesDiluted }));
+  const failures = rows.filter((x) => !x.targets.all).map((x) => ({ seed: x.seed, failed: ['bothEpisodesFound'], episodesFound: x.episodesFound, episodesDiluted: x.episodesDiluted, episodesPriceOnly: x.episodesPriceOnly }));
   const rate = (f) => rows.filter(f).length / rows.length;
   const trapRates = {
     explainableAlert: rate((x) => x.targets.traps.explainableAlert),
@@ -312,3 +314,18 @@ export function seedStudy(configId, seeds, opts = {}) {
 }
 
 export { caseView } from './caseview.js';
+
+/**
+ * Measured tells that separate planted accounts from honest ones (disclosed weaknesses, not detector features):
+ * `register` (rules over the register and its linkage; ring+pump and maker sub-accounts scored separately) and
+ * `tape` (busiest-instrument share etc.). Pooled over `seeds`.
+ */
+export function tellStudy(configId, seeds, opts = {}) {
+  const build = BUILDERS[configId];
+  if (!build) throw new Error(`Unknown config: ${configId}`);
+  return {
+    configId, seeds: seeds.length,
+    register: registerTellStudy(build, seeds),
+    tape: tapeTellStudy((seed) => runScenario(configId, { seed }), seeds, opts),
+  };
+}
