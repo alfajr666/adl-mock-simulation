@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A synthetic crypto market with planted episodes, for practising trade-surveillance judgement. Alerts are leads, not findings.">
+  <title>Crypto spot venue — trade-surveillance simulator</title>
+  <link rel="stylesheet" href="ui/styles.css">
+</head>
+<body data-config="crypto">
+  <div class="shell" style="padding-bottom:0">
+    <div class="runtime-warning" id="runtime-warning" role="alert" hidden>
+      <strong>Interactive runtime unavailable.</strong>
+      <span data-retry>Reload the page to retry loading the simulator.</span>
+      <span data-http hidden>Serve this folder over HTTP so the browser can load the engine modules: <code>python3 -m http.server 8000</code>, then open <code>http://localhost:8000/crypto.html</code>.</span>
+    </div>
+    <noscript><div class="fallback"><h2>JavaScript is required</h2><p class="muted">This simulator runs entirely in your browser and needs scripts enabled. Nothing is sent anywhere.</p></div></noscript>
+  </div>
+  <div id="app"></div>
+  <script src="ui/guard.js"></script>
+  <script type="module">
+    import { startApp } from './ui/app.js';
+    startApp('crypto');
+  </script>
+</body>
+</html>

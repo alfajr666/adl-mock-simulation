@@ -5,6 +5,8 @@
   "type": "module",
   "description": "Deterministic, browser-runnable trade-surveillance simulator engine (synthetic data only).",
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:ui": "node test/ui-smoke.cjs",
+    "//test:ui": "Serves this folder with python3 -m http.server on a free port and drives equity.html and crypto.html with Playwright (must be resolvable via require('playwright')). Screenshots go to $SURV_SHOTS or ./.scratch/ui-shots. Not part of npm test."
   }
 }
