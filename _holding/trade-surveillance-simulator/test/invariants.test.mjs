@@ -36,8 +36,8 @@ for (const id of CONFIG_IDS) {
     const r = runScenario(id, { seed: 1 });
     const ring = r.groundTruth.episodes.find((e) => e.type === 'wash');
     const trades = r.tape.trades;
+    assert.ok(trades.some((t) => t.buyAcct === t.sellAcct), 'honest algo accounts self-match now and then');
     const self = trades.filter((t) => t.buyAcct === t.sellAcct);
-    assert.ok(self.length >= 1);
     for (const t of self) {
       const buyOrder = r.tape.orders.find((o) => o.id === t.buyOrderId);
       const sellOrder = r.tape.orders.find((o) => o.id === t.sellOrderId);
@@ -55,6 +55,45 @@ for (const id of CONFIG_IDS) {
   });
 }
 
+test('every trade price sits inside the limits of both orders, and order quantities are conserved', () => {
+  for (const id of CONFIG_IDS) {
+    const r = runScenario(id, { seed: 2 });
+    const byId = new Map(r.tape.orders.map((o) => [o.id, o]));
+    const filled = new Map(), cancelled = new Map();
+    for (const t of r.tape.trades) {
+      const b = byId.get(t.buyOrderId), s = byId.get(t.sellOrderId);
+      if (b.type === 'L') assert.ok(t.price <= b.price);
+      if (s.type === 'L') assert.ok(t.price >= s.price);
+      filled.set(b.id, (filled.get(b.id) || 0) + t.qty); filled.set(s.id, (filled.get(s.id) || 0) + t.qty);
+    }
+    for (const c of r.tape.cancels) cancelled.set(c.orderId, (cancelled.get(c.orderId) || 0) + c.qty);
+    for (const o of r.tape.orders) {
+      if (o.status !== 'accepted') continue;
+      const done = (filled.get(o.id) || 0) + (cancelled.get(o.id) || 0);
+      assert.ok(done <= o.qty, `order ${o.id} over-allocated`);
+      if (o.type === 'M') assert.equal(done, o.qty, 'a market order is fully filled or its remainder cancelled');
+    }
+  }
+});
+
+test('equity: no trade prints outside the daily band (market orders included)', () => {
+  for (const seed of [1, 2, 3]) {
+    const r = runScenario('equity', { seed });
+    const { stepsPerDay, stepMs, dayMs } = r.market.session;
+    const lastBefore = {};
+    for (const d of r.market.instruments) lastBefore[d.id] = d.refPrice0;
+    let day = 0, ref = { ...lastBefore };
+    for (const t of r.tape.trades) {
+      const d = Math.floor(t.t / dayMs);
+      if (d !== day) { day = d; ref = { ...lastBefore }; }
+      const lo = Math.ceil(ref[t.inst] * 0.8), hi = Math.floor(ref[t.inst] * 1.2);
+      assert.ok(t.price >= lo && t.price <= hi, `trade ${t.id} at ${t.price} outside ${lo}..${hi}`);
+      lastBefore[t.inst] = t.price;
+    }
+    assert.ok(stepsPerDay * stepMs < dayMs);
+  }
+});
+
 test('equity: lot size, tick units and the daily band are enforced and logged', () => {
   const r = runScenario('equity', { seed: 1 });
   assert.ok(r.market.instruments.every((d) => d.lotSize === 100 && d.bandPct === 0.2 && d.tickSize >= 1));
@@ -63,7 +102,9 @@ test('equity: lot size, tick units and the daily band are enforced and logged', 
   assert.ok(rejected.length > 0);
   assert.ok(rejected.every((o) => o.reason === 'BAND'));
   assert.equal(r.stats.rejections.BAND, rejected.length);
-  assert.match(r.market.label, /IDX-style/);
+  assert.doesNotMatch(r.market.label, /IDX/);
+  assert.match(r.market.label, /daily-band/);
+  assert.ok(r.market.instruments.every((d) => d.id.endsWith('.SIM')));
 });
 
 test('crypto: finer tick, no band, continuous single session', () => {

@@ -35,6 +35,27 @@ export class RegisterBuilder {
     return e;
   }
 
+  /** Set one attribute value on one account. */
+  set(key, attr, value) { this.byKey[key].attributes[attr] = value; }
+
+  /**
+   * Background collisions: each listed account keeps a unique value with probability `unique`,
+   * otherwise draws one of the shared pool values (weights need not sum to 1 - they are relative).
+   * pools: [{count, weight}] -> `count` pool values each with relative weight `weight`.
+   */
+  drawPool(keys, attr, prefix, unique, pools) {
+    const values = [];
+    for (const [pi, p] of pools.entries()) for (let n = 0; n < p.count; n++) values.push({ v: `${prefix}-S${pi}${n}`, w: p.weight });
+    const total = values.reduce((s, x) => s + x.w, 0);
+    for (const k of keys) {
+      if (this.rng.u() < unique) continue;
+      let x = this.rng.u() * total;
+      let pick = values[values.length - 1].v;
+      for (const e of values) { x -= e.w; if (x <= 0) { pick = e.v; break; } }
+      this.byKey[k].attributes[attr] = pick;
+    }
+  }
+
   /** Make every listed account carry the same value of `attr` (the first one's). */
   share(keys, attr) {
     const v = this.byKey[keys[0]].attributes[attr];
@@ -46,7 +67,7 @@ export class RegisterBuilder {
     const order = this.entries.map((_, i) => i);
     this.rng.shuffle(order);
     const idOf = {};
-    order.forEach((idx, n) => { idOf[this.entries[idx].key] = `A${String(n + 1).padStart(3, '0')}`; });
+    order.forEach((ei, n) => { idOf[this.entries[ei].key] = `A${String(n + 1).padStart(3, '0')}`; });
     const rows = this.entries.map((e) => ({
       acct: idOf[e.key],
       declaredOwner: e.attributes[this.schema.ownerAttr],
@@ -56,7 +77,7 @@ export class RegisterBuilder {
     return {
       idOf,
       register: {
-        schema: this.schema.attributes.map((a) => ({ key: a.key, label: a.label, strength: a.strength })),
+        schema: this.schema.attributes.map((a) => ({ key: a.key, label: a.label, strength: a.strength, rationale: a.rationale, caveat: a.caveat })),
         ownerAttribute: this.schema.ownerAttr,
         rows,
       },

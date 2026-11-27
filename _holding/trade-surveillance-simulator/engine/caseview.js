@@ -19,14 +19,18 @@ export function caseView(result, alertId) {
 
   // ---- accounts shown on the case ------------------------------------------
   let accountIds = [...alert.accounts];
-  let accountReason = alert.rule === 'P1' ? 'top aggressive buyers in the alert window' : 'accounts named by the alert';
+  let accountsNote = 'accounts named by the alert';
+  const aggBuy = new Map(), aggSell = new Map();
+  for (const t of instTrades) {
+    if (t.t < alert.window.startMs || t.t >= alert.window.endMs) continue;
+    if (t.aggressor === 'B') aggBuy.set(t.buyAcct, (aggBuy.get(t.buyAcct) || 0) + t.qty);
+    else aggSell.set(t.sellAcct, (aggSell.get(t.sellAcct) || 0) + t.qty);
+  }
   if (alert.rule === 'P1') {
-    const agg = new Map();
-    for (const t of instTrades) {
-      if (t.t < alert.window.startMs || t.t >= alert.window.endMs || t.aggressor !== 'B') continue;
-      agg.set(t.buyAcct, (agg.get(t.buyAcct) || 0) + t.qty);
-    }
-    const ranked = [...agg.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, TOP_PARTICIPANTS).map((x) => x[0]);
+    // a rising alert is explained by aggressive buyers, a falling one by aggressive sellers; both sides are listed
+    accountsNote = `top aggressive ${alert.metrics.direction === 'down' ? 'sellers and buyers' : 'buyers and sellers'} in the alert window, with their clusters`;
+    const top = (m) => [...m.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, TOP_PARTICIPANTS).map((x) => x[0]);
+    const ranked = new Set([...top(aggBuy), ...top(aggSell)]);
     const set = new Set(ranked);
     for (const a of ranked) {
       const c = linkage.clusters.find((cl) => cl.id === linkage.clusterOf[a]);
@@ -39,6 +43,8 @@ export function caseView(result, alertId) {
     ...rowOf.get(a),
     clusterId: linkage.clusterOf[a],
     finalPosition: (result.ledger.positions[a] || {})[inst] || 0,
+    aggressiveBuyQty: aggBuy.get(a) || 0,
+    aggressiveSellQty: aggSell.get(a) || 0,
   }));
   const idSet = new Set(accountIds);
   const edges = linkage.edges.filter((e) => idSet.has(e.a) && idSet.has(e.b));
@@ -89,7 +95,7 @@ export function caseView(result, alertId) {
     alert,
     instrument: def,
     linkagePolicy: linkage.policy,
-    accountsNote: accountReason,
+    accountsNote,
     accounts,
     linkage: { edges, clusters: linkage.clusters.filter((c) => c.accounts.some((a) => idSet.has(a))) },
     trades,

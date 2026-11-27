@@ -200,15 +200,10 @@ export function simulate(scn, seed) {
 
   function ringAct() {
     const c = ring;
-    if (ctx.step < c.fromStep || ctx.step >= c.toStep) return;
-    if (!c.selfSteps.includes(ctx.step) && !c.rng.chance(c.actProb)) return;
+    if (ctx.step < c.fromStep || ctx.step >= c.toStep || !c.rng.chance(c.actProb)) return;
     const d = defs[c.inst];
     const rng = c.rng;
     const spokes = c.accts.filter((a) => a !== c.hub);
-    if (c.selfSteps.includes(ctx.step)) {
-      const a = rng.pick(c.accts);
-      crossPair(c.inst, a, a, rng.int(1, 2) * d.lotSize, 'B', rng);       // scheduled crude self-cross
-    }
     const n = rng.int(1, c.maxTrades);
     for (let i = 0; i < n; i++) {
       const roll = rng.u();
@@ -232,6 +227,16 @@ export function simulate(scn, seed) {
         const seller = buyer === x ? y : x;
         crossPair(c.inst, buyer, seller, qty, rng.chance(0.5) ? 'B' : 'S', rng);
       }
+    }
+  }
+
+  /** Honest algo accounts that now and then match against their own resting quote (benign self-match noise). */
+  const algos = (scn.algos || []).map((acct) => ({ acct, rng: R(`algo:${acct}`) }));
+  function algoAct() {
+    for (const a of algos) {
+      if (!a.rng.chance(scn.algoP)) continue;
+      const inst = a.rng.pick(instIds);
+      crossPair(inst, a.acct, a.acct, a.rng.int(1, 2) * defs[inst].lotSize, 'B', a.rng);
     }
   }
 
@@ -311,6 +316,7 @@ export function simulate(scn, seed) {
     runTransfers();
     if (ring) ringAct();
     if (pump) pumpAct();
+    algoAct();
     const order = worldRng.shuffle(retail.map((_, i) => i));
     for (const i of order) retailAct(retail[i]);
 

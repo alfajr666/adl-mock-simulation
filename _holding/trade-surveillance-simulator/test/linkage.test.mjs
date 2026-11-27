@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runScenario, CONFIG_IDS, LINKAGE_POLICIES } from '../engine/index.js';
+import { runScenario, CONFIG_IDS, LINKAGE_POLICIES, seedStudy } from '../engine/index.js';
 import { buildLinkage } from '../engine/linkage.js';
 
 const reg = (rows) => ({
@@ -38,6 +38,7 @@ for (const id of CONFIG_IDS) {
     const r = runScenario(id, { seed: 1 });
     const { schema, rows, ownerAttribute } = r.register;
     assert.ok(schema.every((a) => a.strength === 'strong' || a.strength === 'weak'));
+    for (const a of schema) { assert.ok(a.rationale.length > 20, `${a.key} rationale`); assert.ok(a.caveat.length > 20, `${a.key} caveat`); }
     assert.ok(schema.filter((a) => a.strength === 'weak').length >= 2, 'two weak attribute types are needed for the weak2 policy');
     assert.ok(rows.length >= 45 && rows.length <= 60);
     for (const row of rows) {
@@ -46,7 +47,7 @@ for (const id of CONFIG_IDS) {
       assert.deepEqual(Object.keys(row.attributes), schema.map((a) => a.key));
     }
     const text = JSON.stringify(r.register);
-    for (const word of ['controller', 'ring', 'pump', 'planted', 'EP-', 'role']) assert.ok(!text.includes(word), `register leaks "${word}"`);
+    for (const word of ['controller', 'ring-', 'pump-', 'planted', 'EP-', 'role', 'honest']) assert.ok(!text.includes(word), `register leaks "${word}"`);
   });
 
   test(`${id}: the designed accounts link the way the scenario says`, () => {
@@ -60,7 +61,7 @@ for (const id of CONFIG_IDS) {
 
     const edge = (policy, x, y) => runScenario(id, { seed: 1, linkagePolicy: policy }).linkage.edges.find((e) => (e.a === x && e.b === y) || (e.a === y && e.b === x));
     // the hub shares only weak attributes with the rest of the ring
-    const hubEdges = r.linkage.edges.filter((e) => e.a === hub || e.b === hub);
+    const hubEdges = r.linkage.edges.filter((e) => (e.a === hub && spokes.includes(e.b)) || (e.b === hub && spokes.includes(e.a)));
     assert.ok(hubEdges.length >= 1);
     assert.ok(hubEdges.every((e) => e.shared.every((s) => s.strength === 'weak') && e.shared.length >= 2));
     assert.equal(edge('strong1', hub, spokes[0])?.linked ?? false, false);
@@ -70,7 +71,7 @@ for (const id of CONFIG_IDS) {
     assert.equal(clusterIds('strong1').size, 2);
 
     // legitimate market-maker sub-accounts: one declared owner
-    const mm = gt.decoys.find((d) => d.type === 'market-maker-subaccount-transfer').accounts;
+    const mm = gt.decoys.find((d) => d.type === 'same-owner-cross').accounts;
     assert.equal(ownerOf[mm[0]], ownerOf[mm[1]]);
     // coincidental pair: a single weak attribute, not linked until the loosest policy
     const pair = gt.decoys.find((d) => d.type === 'coincidental-shared-attribute').accounts;
@@ -81,3 +82,36 @@ for (const id of CONFIG_IDS) {
     assert.notEqual(ownerOf[pair[0]], ownerOf[pair[1]]);
   });
 }
+
+test('register schema reframes identity and hosted attributes as the review asked', () => {
+  const c = runScenario('crypto', { seed: 1 }).register.schema;
+  const by = Object.fromEntries(c.map((a) => [a.key, a]));
+  assert.ok(by.controllingPerson && !by.kycIdentity);
+  assert.match(by.controllingPerson.caveat, /identity, not a link/);
+  assert.equal(by.withdrawalAddress.strength, 'weak');
+  assert.match(by.withdrawalAddress.caveat, /Hosted/);
+  assert.match(by.apiKeyLineage.rationale, /master key/);
+  const e = runScenario('equity', { seed: 1 }).register.schema;
+  assert.match(e.find((a) => a.key === 'brokerBranch').caveat, /Very weak/);
+});
+
+test('linkage policy has a real cost in both directions (20 seeds each config)', () => {
+  const seeds = Array.from({ length: 20 }, (_, i) => i + 1);
+  const mean = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
+  for (const id of CONFIG_IDS) {
+    const by = {};
+    for (const p of ['strong1', 'weak2', 'weak1']) by[p] = seedStudy(id, seeds, { linkagePolicy: p });
+    const col = (p, k) => by[p].rows.map((r) => r[k]);
+    // strict misses: W2 finds the ring less often than the default does
+    assert.ok(mean(col('strong1', 'w2Found')) < mean(col('weak2', 'w2Found')) - 0.3, `${id} strict W2 recall`);
+    // strict builds few spurious pairs, default a few, loose a great many
+    assert.ok(mean(col('strong1', 'falseLinkedPairs')) <= mean(col('weak2', 'falseLinkedPairs')));
+    assert.ok(mean(col('weak2', 'falseLinkedPairs')) < 15, 'default: a few spurious pairs');
+    assert.ok(mean(col('weak1', 'falseLinkedPairs')) > 10 * mean(col('weak2', 'falseLinkedPairs')), 'loose: large false clusters');
+    assert.ok(mean(col('weak1', 'largestCluster')) >= 4 * mean(col('weak2', 'largestCluster')));
+    // loose raises unrelated groups and visibly disturbs planted detections or labels
+    assert.ok(mean(col('weak1', 'groupsUnrelated')) > mean(col('weak2', 'groupsUnrelated')) + 1);
+    const disturbed = seeds.filter((s, i) => by.weak1.rows[i].groupsExplainable === 0 || by.weak1.rows[i].groupsUnrelated > by.weak2.rows[i].groupsUnrelated).length;
+    assert.ok(disturbed >= 16, `${id}: loose disturbs ${disturbed}/20 seeds`);
+  }
+});

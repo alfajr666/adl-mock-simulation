@@ -39,7 +39,20 @@ export class Exchange {
   beginStep(t, stepMs) { this.clockBase = t; this.clockN = 0; this.stepMs = stepMs; }
   now() { return this.clockBase + Math.min(this.clockN++, this.stepMs - 1); }
 
-  setReference(inst, price) { this.books[inst].ref = price; }
+  _bounds(b) {
+    return b.def.bandPct == null ? null : [Math.ceil(b.ref * (1 - b.def.bandPct)), Math.floor(b.ref * (1 + b.def.bandPct))];
+  }
+
+  /** New reference price (day start). Resting orders that fall outside the new band are cancelled. */
+  setReference(inst, price) {
+    const b = this.books[inst];
+    b.ref = price;
+    const bd = this._bounds(b);
+    if (!bd) return;
+    const stale = [];
+    for (const o of this.live.values()) if (o.inst === inst && (o.price < bd[0] || o.price > bd[1])) stale.push(o.id);
+    for (const id of stale) this.cancel(id, 'BAND_REPRICE');
+  }
   last(inst) { return this.books[inst].last; }
   bestBid(inst) { const p = this.books[inst].bidPx; return p.length ? p[p.length - 1] : null; }
   bestAsk(inst) { const p = this.books[inst].askPx; return p.length ? p[0] : null; }
@@ -70,11 +83,8 @@ export class Exchange {
     if (!Number.isInteger(qty) || qty <= 0) reason = 'QTY';
     else if (qty % b.def.lotSize !== 0) reason = 'LOT';
     else if (type === 'L' && (!Number.isInteger(price) || price <= 0)) reason = 'PRICE';
-    else if (type === 'L' && b.def.bandPct != null) {
-      const lo = Math.ceil(b.ref * (1 - b.def.bandPct));
-      const hi = Math.floor(b.ref * (1 + b.def.bandPct));
-      if (price < lo || price > hi) reason = 'BAND';
-    }
+    const bd = this._bounds(b);
+    if (!reason && type === 'L' && bd && (price < bd[0] || price > bd[1])) reason = 'BAND';
     if (reason) {
       this.rejections[reason]++;
       this.orders.push({ ...base, status: 'rejected', reason });
@@ -89,6 +99,7 @@ export class Exchange {
     while (o.rem > 0 && oppPx.length) {
       const bestPx = side === 'B' ? oppPx[0] : oppPx[oppPx.length - 1];
       if (type === 'L' && (side === 'B' ? bestPx > price : bestPx < price)) break;
+      if (bd && (bestPx < bd[0] || bestPx > bd[1])) break;          // no print outside the daily band, market orders included
       const lvl = oppMap.get(bestPx);
       const r = lvl[0];
       const q = Math.min(o.rem, r.rem);

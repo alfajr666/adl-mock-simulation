@@ -1,178 +1,239 @@
 # Trade-surveillance simulator: engine contract
 
-Model `surv-model-1.0.0`. Plain ES modules, zero dependencies, no build step, no DOM, no `Math.random`, no `Date.now`.
-All data is synthetic. Company and token names are fictional. The viewpoint is an exchange surveillance desk that holds
-full account-level data. Alerts are leads for a human to review. Nothing here says a participant did something wrong.
+Model `surv-model-1.1.0`. Plain ES modules, zero dependencies, no build step, no DOM, no `Math.random`, no `Date.now`.
+All data is synthetic; company and token names are fictional (equity codes end in `.SIM`, crypto in `-SIMU`). The viewpoint is an
+exchange surveillance desk with full account-level data. Alerts are leads for a human to review; nothing here says a participant
+did something wrong.
 
-Run `npm test` (Node 20+). Import from `engine/index.js`.
+`npm test` (Node 20+, 100 tests). `npm run seeds` prints the 100-seed study as markdown (`-- --policy weak1`, `-- --baseline trailing`, `-- --n 50`).
 
 ## API
 
 ```js
-import { runScenario, sweep, linkageComparison, caseView, checkInvariants,
-         MODEL_VERSION, DEFAULTS, LINKAGE_POLICIES, CONFIG_IDS, clearCache } from './engine/index.js';
+import { runScenario, sweep, seedStudy, linkageComparison, caseView, detect, detectionContext, detectionTargets,
+         checkInvariants, MODEL_VERSION, DEFAULTS, LINKAGE_POLICIES, CONFIG_IDS, PATTERN_RULES, clearCache } from './engine/index.js';
 ```
 
 | Call | Returns |
 |---|---|
-| `runScenario(configId, {seed?, thresholds?, linkagePolicy?, fresh?})` | one full result (below). `configId` is `'equity'` or `'crypto'`. Defaults: `seed` 1, `linkagePolicy` `'weak2'`, thresholds from `DEFAULTS.thresholds[configId]`; `thresholds` is merged over the defaults. |
-| `sweep(configId, param, values, baseOpts?)` | `{configId, param, seed, rows:[{value, overall, byRule, fpCauses, linkage?}]}`. `param` is any threshold key or `'linkagePolicy'`. `linkage` is present only for `'linkagePolicy'`. |
+| `runScenario(configId, {seed?, thresholds?, linkagePolicy?, fresh?})` | one full result (below). `configId` is `'equity'` or `'crypto'`. Defaults: seed 1, `'weak2'`, `DEFAULTS.thresholds[configId]` with `thresholds` merged over it. The result is deep-frozen. |
+| `sweep(configId, param, values, baseOpts?)` | `{configId, param, seed, rows}`; `param` is a threshold key or `'linkagePolicy'`. Row shape below. |
 | `linkageComparison(configId, baseOpts?)` | `sweep` over `strong1, weak2, weak1`. |
-| `caseView(result, alertId)` | case-file view model (below). Throws on unknown id. |
-| `checkInvariants(result)` | recomputes positions, cash and counters from the tape alone. Healthy: `crossedBookEvents`, `badAccounts`, `nonIntegerOrNonPositive`, `ledgerMismatch` all 0; `cashSum` 0; every `positionSumByInstrument` value 0. |
+| `seedStudy(configId, seeds, opts?)` | `{configId, seeds, opts, rows, summary, targetsPassing, failures}`; per-seed group-level rows and `summary[column] = {median,min,max}`. `failures = [{seed, failed:[target names]}]`. |
+| `caseView(result, alertId)` | case-file view model (below). |
+| `detect({market, register, trades, thresholds, linkagePolicy})` | `{alerts, linkage}` on any tape, including hand-built ones. |
+| `detectionContext({market, trades})` | what the rules see: `{market, trades, prep, tradesByInst}`. Nothing from the scenario or ground truth (a test pins this). |
+| `detectionTargets(result)` | `{bothEpisodesFound, explainablePresent, shockAlertsOnP1, shockQuietOnP2, all}`. |
+| `checkInvariants(result)` | recomputes positions and cash from the tape. Healthy: `crossedBookEvents`, `badAccounts`, `nonIntegerOrNonPositive`, `ledgerMismatch` 0, `cashSum` 0, every `positionSumByInstrument` value 0. |
 | `clearCache()` | drops cached simulations. |
 
-The market is simulated once per `(configId, seed)` and cached; thresholds and linkage only re-run detection (a sweep of 10
-values costs about 10 detection passes, not 10 simulations). Treat the returned `tape`, `register`, `market` as read-only because
-they are shared with the cache. `fresh: true` bypasses the cache (used by the determinism tests).
+The market is simulated once per `(configId, seed)` and cached; thresholds and linkage only re-run detection. Returned objects are
+frozen, so callers cannot corrupt the cache (copy before mutating). `fresh: true` bypasses the cache.
 
-Time is integer milliseconds from session start. Equity day `d` starts at `d * market.session.dayMs`.
-`market.bins[i] = {index, day, t0, t1}` are half-open `[t0, t1)` intervals; only trading time is in the list.
-Every window in the rules is a run of whole bins.
+Time is integer ms from session start. Equity day `d` starts at `d * market.session.dayMs`. `market.bins[i] = {index, day, t0, t1}` are
+half-open `[t0, t1)`; only trading time is listed. Every rule window is a run of whole bins.
 
 ### `runScenario` result
 
 ```js
-{ modelVersion, configId, seed, linkagePolicy, thresholds,          // thresholds = fully resolved
+{ modelVersion, configId, seed, linkagePolicy, thresholds,
   market:   { label, session:{days,stepsPerDay,stepMs,dayMs,binSteps,...}, binMs, bins:[...],
               instruments:[{id,name,tickSize,lotSize,bandPct|null,refPrice0}] },
-  register: { schema:[{key,label,strength:'strong'|'weak'}], ownerAttribute,
-              rows:[{acct, declaredOwner, type, attributes:{[key]:value}}] },
-  tape:     { orders:[...], cancels:[...], trades:[...] },            // each sorted by seq; seq is global
-  ledger:   { positions:{[acct]:{[inst]:int}}, cash:{[acct]:int} },    // final, ticks x qty
+  register: { schema:[{key,label,strength:'strong'|'weak',rationale,caveat}], ownerAttribute,
+              rows:[{acct, declaredOwner, type:'individual'|'corporate'|'market_maker', attributes:{[key]:value}}] },
+  tape:     { orders:[...], cancels:[...], trades:[...] },
+  ledger:   { positions:{[acct]:{[inst]:int}}, cash:{[acct]:int} },
   stats:    { orders, cancels, trades, rejections:{BAND,LOT,PRICE,QTY}, crossedBookEvents },
-  linkage:  { policy, clusters:[{id,accounts,edges:[{a,b,shared:[{key,strength,value}]}]}],
-              clusterOf:{[acct]:clusterId}, singletonCount,
-              edges:[{a,b,shared,linked}] },                          // all shared-attribute pairs; linked = policy satisfied
+  linkage:  { policy, clusters:[{id,accounts,edges:[{a,b,shared:[{key,strength,value}]}]}], clusterOf:{[acct]:id},
+              singletonCount, edges:[{a,b,shared,linked}] },     // edges = every pair sharing anything; linked = policy satisfied
   alerts:   [Alert], score: Score, groundTruth: GroundTruth }
 ```
 
-Prices are integer ticks (display price = `ticks * tickSize`). Quantities are integers (equity: shares, multiples of `lotSize` 100;
-crypto: units, multiples of `lotSize` 10). Notional is `price * qty`, an integer. Cluster ids are `CL-<first account id>`; singletons
-have a cluster id too (`clusterOf` covers every account) but are not listed in `clusters`.
+Prices are integer ticks (display price = `ticks * tickSize`). Quantities are integers (equity shares in multiples of 100; crypto units
+in multiples of 10). Notional = `price * qty`, an integer. Cluster ids are `CL-<first account id>`; singletons have ids in `clusterOf` too.
+Account `type` is drawn independently of role (about 13% corporate among non-makers); only makers carry `market_maker`.
 
-Tape records (all carry `seq`, `t`, `inst`, `acct`):
-- order: `{seq,id,t,inst,acct,side:'B'|'S',type:'L'|'M',price|null,qty,status:'accepted'|'rejected',reason}`; `id === seq`. Rejections (`BAND`, `LOT`) are logged here.
-- cancel: `{seq,t,orderId,inst,acct,side,price,qty(remaining),reason}`; reasons `REQUOTE, REPLACED, EXPIRED, UNFILLED_CROSS, MARKET_REMAINDER`.
-- trade: `{seq,id,t,kind:'trade',inst,price,qty,side,acct,aggressor,buyAcct,sellAcct,buyOrderId,sellOrderId}`; `side/acct` are the aggressor's; price is the resting order's price.
+Tape records carry `seq, t, inst, acct`:
+- order `{id(=seq),side,type:'L'|'M',price|null,qty,status:'accepted'|'rejected',reason}`; rejections (`BAND`, `LOT`) are logged here.
+- cancel `{orderId,side,price,qty(remaining),reason}`; reasons `REQUOTE, REPLACED, EXPIRED, UNFILLED_CROSS, MARKET_REMAINDER, BAND_REPRICE`.
+- trade `{id,kind:'trade',price,qty,side,acct (aggressor's),aggressor,buyAcct,sellAcct,buyOrderId,sellOrderId}`; price is the resting order's.
+
+### Register attributes (strength, meaning, caveat live in `register.schema`)
+
+Equity: strong `beneficialOwnerId` (same declared owner: identity, not a link), `fundingAccount` (family members and joint accounts share
+it); weak `brokerBranch` (very weak: 7 branches serve everyone), `device` (households, offices). Crypto: strong `controllingPerson`
+(identity, not a link), `fundingWallet` (families, custodial wallets), `apiKeyLineage` (keys issued under one master key; bot platforms
+issue keys for unrelated customers); weak `withdrawalAddress` (hosted addresses), `deviceFingerprint`, `ip` (carrier or office NAT).
+Background accounts draw weak attributes from shared pools; two family pairs share a strong attribute; two household pairs share two weak ones.
 
 ### Alert
 
 ```js
-{ id: 'RULE|instrument|clusterId-or-acct-or--|startMs', rule: 'W1'|'W2'|'P1'|'P2', instrument,
-  window:{startMs,endMs}, accounts:[acct], cluster:{id,accounts}|null,   // P1 has no accounts (price/volume alert)
-  metrics:{...}, thresholdsCrossed:{[thresholdKey]:{value,threshold}},
-  supportingTradeIds:[...], supportingOrderIds:[...] }                     // P1: trades only
+{ id: 'RULE|instrument|cluster-or-acct-or-direction|startMs', rule: 'W1'|'W2'|'P1'|'P2', instrument,
+  window:{startMs,endMs}, accounts:[acct], cluster:{id,accounts}|null,       // P1: no accounts
+  metrics:{...}, thresholdsCrossed:{[key]:{value,threshold}}, supportingTradeIds:[...], supportingOrderIds:[...] }
 ```
-Metrics by rule: W1 `selfTradeCount, selfTradeQty, selfTradeNotional`. W2 `internalShareOfClusterVolume, netPositionRatio,
-internalShareOfInstrumentVolume, internalQty, externalQty` (peak window of the merged run). P1 `returnBps, zReturn, volumeMultiple,
-direction, baselineMode, baselineSigma, baselineMedianNotional, startBin, endBin`. P2 `rampAggressiveBuyShare, rampAggressiveBuyQty,
-followNetSellQty, followNetSellRatio, pnlTicksQty, cashTicksQty, closingPosition, markPrice, p1AlertId, rampEndBin, rampWindow, followWindow`.
-`pnlTicksQty` = cash flows of the cluster from `p2LookbackBins` before the P1 window to the end of the following window, plus open
-inventory marked at the last print (ticks x qty, integer).
+- W1 `selfTradeCount, selfTradeQty, selfTradeNotional`. Merging counts bins (`w1MergeBins`), not wall-clock.
+- W2 (peak window of the merged run) `clusterInternalShare` (internal qty / all qty the cluster traded), `instrumentInternalShare` (internal
+  qty / instrument qty), `netChangeOverInternal` (abs(cluster buys - sells) / internal qty), `internalQty, externalQty, windowBins`.
+- P1 `returnBps` (signed), `moveScore`, `volumeMultiple`, `direction` `'up'|'down'`, `baselineMode`, `baselineSource`, `baselineVolatility`,
+  `baselineMedianNotional`, `baselineBins {start,end}`, `startBin, endBin`. `moveScore` = largest excursion from the window start, relative
+  to the instrument's baseline volatility (RMS bin return) scaled by sqrt(window bins). It is not a statistical z-score.
+- P2 `rampAggressiveBuyShare, rampAggressiveBuyQty, followNetSellQty, followNetSellRatio, accumulationNetQty` (cluster net buying in the
+  lookback before the P1 window), `accumulationBuyShareOfVolume`, `pnlTicksQty, cashTicksQty, closingPosition, markPrice, p1AlertId,
+  peakBin, rampEndBin, rampWindow, followWindow, lookbackWindow`. `pnlTicksQty` = cash flows over lookback + ramp + following window plus
+  open inventory marked at the last print (integer ticks x qty).
 
-### Score
+### Score and labels
 
-`score = {overall, byRule:{W1,W2,P1,P2}, byEpisode, fpCauses, fpCausesByRule, labels}`. Each of `overall`/`byRule[r]` is
-`{alerts,tp,fp,episodes,detected,fn,precision,recall}` (`precision` is `null` with no alerts). An alert is TP if it maps to a planted
-episode (same instrument, overlapping window, right episode type; W1 needs 1 ring account, W2 two, P2 one pump account), else FP.
-Rule targets: W1/W2 -> wash, P1/P2 -> pump. Per-rule `recall` = episodes of the rule's target type that rule found / planted. `overall.recall`
-= episodes found by any rule / 2. `fn` = planted episodes missed. `labels[alertId] = {label:'TP'|'FP', episodeIds, cause, decoyIds}`;
-causes: `market-maker-subaccounts`, `benign-shock`, `coincidental-link`, `natural-volatility-or-volume`, `unattributed`.
+Pattern rules (W2, P1, P2) are scored against the planted episodes. W1 is scored apart as self-match hygiene.
+
+```js
+score = { overall, byRule:{W2,P1,P2}, selfMatch, byEpisode, decoysAlerted:[ids], causes, causesByRule, labels }
+overall | byRule[r] = {
+  alerts:  {total, match, explainable, unrelated},
+  groups:  {total, episodeMatches, explainable, unrelated},
+  episodes:{planted, found, missed},
+  precision:{ alert:{match, matchOrExplainable}, group:{match, matchOrExplainable} },   // null when there are no alerts
+  recall }                                                                              // episodes found / planted
+selfMatch = {alerts, onPlantedAccounts, onHonestAlgoAccounts, onOtherAccounts, accountsFlagged, note}
+byEpisode = [{episodeId, type, detectedBy:[rules], missed}]
+labels[alertId] = {label:'MATCH'|'EXPLAINABLE'|'UNRELATED'|'SELF_MATCH', episodeIds, cause, decoyIds}
+```
+- `MATCH`: maps to a planted episode (same instrument, overlapping half-open window, rule type fits; W2 needs 2 episode accounts, P2 1, P1 none).
+- `EXPLAINABLE`: a W2 alert whose accounts are all one maker's sub-accounts, in the instrument and time of a same-owner cross. Same-owner
+  trades are a wash in form and a legitimate inventory transfer in fact; the alert is expected and needs a documented explanation. cause `same-owner-cross`.
+- `UNRELATED`: no planted cause. causes: `benign-shock` (news jump, P1), `coincidental-link` (alert accounts all inside one honest pair),
+  `background-collision` (a cluster of honest accounts built from pooled attributes), `natural-move` (P1 with no cause), `unattributed`.
+- Groups: alerts are grouped by (rule, episode) for MATCH and by (rule, instrument) for EXPLAINABLE and UNRELATED. One episode that
+  splits into three alerts is one group. Compare precision at group level; alert-level counts are kept alongside.
+- Both precision pairs are reported: `match` = MATCH / all, `matchOrExplainable` = (MATCH + EXPLAINABLE) / all.
+
+### Sweep rows
+
+`{value, episodesFound, episodesMissed, decoysAlerted, groups, alerts, precision, recall, overall, byRule, selfMatch, causes, linkage?}`.
+Chart `episodesFound`, `groups.*` and `decoysAlerted`, not raw alert counts. For `'linkagePolicy'`, `linkage = {clusters, largestCluster,
+ringFragments, ringWhole, falseLinkFormed, designedPairsLinked, falseLinkedPairs, falseLinkAlerts}`; `falseLinkedPairs` counts pairs of
+unrelated honest accounts sharing a cluster.
 
 ### `caseView(result, alertId)`
 
 ```js
-{ modelVersion, alert, instrument, linkagePolicy,
-  accountsNote,                       // why these accounts are shown (P1 shows the top aggressive buyers and their clusters)
-  accounts:[{acct,declaredOwner,type,attributes,clusterId,finalPosition}],   // register rows, no roles
-  linkage:{ edges:[{a,b,shared,linked}], clusters:[...] },                   // evidence among the shown accounts
-  trades:[trade + {notional,selfTrade}],                                     // = alert.supportingTradeIds
-  series:[{bin,startMs,endMs,open,high,low,close,qty,notional,trades,inAlertWindow}],   // every bin of the instrument; inAlertWindow = overlaps the alert
-  clusterSeries:[{clusterId,accounts,points:[{bin,endMs,position,cash,pnl}]}],          // pnl = cash + position * bin close
+{ modelVersion, alert, instrument, linkagePolicy, accountsNote,
+  accounts:[{acct,declaredOwner,type,attributes,clusterId,finalPosition,aggressiveBuyQty,aggressiveSellQty}],   // no roles
+  linkage:{edges, clusters}, trades:[trade + {notional,selfTrade}],
+  series:[{bin,startMs,endMs,open,high,low,close,qty,notional,trades,inAlertWindow}],     // inAlertWindow = bin overlaps the alert
+  clusterSeries:[{clusterId,accounts,points:[{bin,endMs,position,cash,pnl}]}],             // pnl = cash + position * bin close
   groundTruth:{label,episodeIds,cause,decoyIds,accountRoles,episodes,decoys} }
 ```
-Planted truth appears only under `groundTruth`, and `result.groundTruth` is the same kind of structure for the whole run
-(`controllers, accountRoles, instrumentRoles, episodes[{id,type,instrument,accounts,window,stats,...}], decoys[...]`).
-The detector never reads it. Show it only in a clearly separated "answer key" panel.
+A P1 case lists the top aggressive buyers and sellers (with their clusters); a falling alert leads with sellers. Planted truth appears only
+under `groundTruth`. Roles: planted ones start with `planted-` (`planted-wash-ring-spoke`, `-hub`, `planted-pump-group`,
+`planted-maker-sub-account`); background ones are `retail`, `retail-momentum`, `honest-algo`, `honest-family-pair`,
+`honest-household-pair`, `honest-coincidental-link`, `market-maker`. Show it only in a separate answer-key panel.
 
 ## Rules and default thresholds
 
-All thresholds live in `DEFAULTS.thresholds[configId]`; the rule functions read nothing else (a test enforces this).
-Windows are in bins (equity bin 30 min, crypto bin 1 min). Values differ per config only where noted (equity / crypto).
+All thresholds are in `DEFAULTS.thresholds[configId]`; the rules read nothing else (tested). Windows are bins (equity 30 min, crypto 1 min). `eq / cr` where they differ.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `w1MinCount`, `w1MinLots` | 1, 1 | W1 self-trade: trades with the same account on both sides; minimum count and size (lots) per alert |
-| `w1MergeBins` | 60 / 90 | self-trades by one account in one instrument within this many bins form one alert |
-| `w2WindowBins` | 4 / 5 | W2 window length |
-| `w2MergeGapBins` | 8 / 6 | flagged windows separated by at most this many bins merge into one alert |
-| `w2ClusterShare` | 0.5 | internal volume (both sides in the cluster) over all volume the cluster took part in |
-| `w2NetRatio` | 0.25 | maximum of abs(buys - sells) / (buys + sells) for the cluster: near-flat net position |
-| `w2InstrumentShare` | 0.25 | internal volume over total instrument volume in the window |
-| `w2MinInternalLots` | 10 | minimum internal volume (lots) so tiny crosses do not alert |
-| `p1Mode` | `'instrument'` | `'global'` uses one market-wide baseline (median instrument) instead of each instrument's own |
-| `p1WindowBins` | 10 / 5 | P1 window length |
-| `p1BaselineBins` | 10 / 20 | first N bins (clean warm-up) used for the baseline: RMS bin return, median bin notional |
-| `p1ZRet` | 5 | largest close-to-start excursion in the window over `sigma * sqrt(bins)` |
-| `p1VolMult` | 2 | window notional over `bins * median baseline notional` |
-| `p1MinReturnBps` | 300 | floor on the absolute move so tiny moves in quiet names do not alert |
-| `p1MergeGapBins` | 4 / 6 | merge gap for flagged P1 windows |
-| `p2MinClusterSize` | 2 | P2 looks at linked groups only, not single accounts |
-| `p2RampShare` | 0.25 | cluster's share of aggressive buy volume from the P1 window start to the end of the ramp |
-| `p2RampEndFraction` | 0.6 | ramp ends at the first bin that covered this fraction of the window's largest rise |
-| `p2FollowBins` | 20 / 10 | length of the following window |
-| `p2NetSellRatio` | 0.3 | cluster's net selling in the following window over its aggressive ramp buying |
-| `p2MinRampLots` | 5 | minimum aggressive ramp buying (lots) |
-| `p2LookbackBins` | 30 / 40 | lookback for the P&L figure |
+| `w1MinCount`, `w1MinLots` | 1, 1 | W1 self-match: same account both sides; minimum count and lots |
+| `w1MergeBins` | 60 / 90 | self-matches by one account in one instrument within this many bins form one alert |
+| `w2WindowBins`, `w2MergeGapBins` | 4, 8 / 5, 6 | W2 window and merge gap |
+| `w2ClusterShare` | 0.5 | `clusterInternalShare` at least this |
+| `w2NetRatio` | 0.6 | `netChangeOverInternal` at most this (net position change small relative to the round-trip volume) |
+| `w2InstrumentShare` | 0.25 | `instrumentInternalShare` at least this |
+| `w2MinInternalLots` | 10 | minimum internal volume (lots) |
+| `p1Mode` | `'instrument'` | `'global'`: one baseline (the median instrument) for all instruments |
+| `p1Baseline` | `'warmup'` | `'warmup'`: first N bins; `'trailing'`: the N bins before each window (excluded from it) |
+| `p1BaselineBins` | 10 / 20 | N |
+| `p1WindowBins`, `p1MergeGapBins` | 10, 4 / 5, 6 | window and merge gap; rising and falling windows are flagged and merged separately |
+| `p1MoveScore` | 5 | move relative to the instrument's baseline volatility |
+| `p1VolMult` | 2 | window notional over bins x median baseline notional |
+| `p1MinReturnBps` | 300 | floor on the absolute move |
+| `p2MinClusterSize` | 2 | linked groups only |
+| `p2RampShare` | 0.25 | cluster share of aggressive buying from window start to ramp end |
+| `p2RampEndFraction` | 0.6 | ramp ends at the first bin covering this fraction of the window's rise |
+| `p2FollowBins` | 20 / 10 | following window length |
+| `p2NetSellRatio` | 0.3 | net selling in the following window over aggressive ramp buying |
+| `p2MinRampLots`, `p2LookbackBins` | 5, 30 / 5, 40 | minimum ramp buying; lookback for accumulation and P&L |
 
-Linkage policies (`LINKAGE_POLICIES`): `strong1` any one shared strong attribute (strict); `weak2` one strong or two weak (default);
-`weak1` any shared attribute (loose). Union-find over linked pairs. Strong/weak per attribute is in `register.schema`.
-Equity: strong `beneficialOwnerId, fundingAccount`; weak `brokerBranch, device`. Crypto: strong `kycIdentity, fundingWallet,
-withdrawalAddress, apiKeyLineage`; weak `deviceFingerprint, ip`.
+P2 runs only on rising P1 alerts. Linkage (`LINKAGE_POLICIES`): `strong1` one shared strong attribute; `weak2` one strong or two weak (default);
+`weak1` any shared attribute. Counterparty-concentration rules (who trades with whom) are out of scope; hub-and-spoke concentration is why
+strict linkage can miss the ring.
 
-## Scenario design (who is planted where)
+## Scenario design
 
-Both configs: 40 retail accounts (12 momentum followers with individual sensitivity and a cooldown), market makers (post-only,
-requote on schedule or when hit; equity 1 maker with 2 sub-accounts, crypto the same plus a second single-account maker),
-5 instruments, a 4-account wash ring and a 3-account pump group. Account ids are shuffled so ids carry no information. Retail accounts have unique attribute values apart from the planted sharing.
+Both configs: 40 retail accounts (12 momentum followers with individual sensitivity and a cooldown; 2 honest algo accounts that now and
+then self-match; 2 family pairs; 2 household pairs; 1 coincidence pair), makers (post-only; equity 1 maker with 2 sub-accounts, crypto
+that plus a single-account maker), 5 instruments, a 4-account wash ring and a 3-account pump group. Ids are shuffled.
 
-| Role | Equity ("IDX-style": lot 100, tick units, daily band +-20% of previous close) | Crypto (continuous, no band, finer tick) |
+| | Equity (lot 100, tick units, daily band +-20% of previous close, applied to limit and market orders; stale resting orders outside a new band are cancelled; "loosely after Indonesian market conventions") | Crypto (continuous, no band, finer tick) |
 |---|---|---|
-| Steps | 6 sessions x 60 steps of 5 min, bin 30 min; session 0 is the clean baseline | 360 steps of 15 s (90 min), bin 1 min; first 20 min clean baseline |
-| Wash target | QFRO, steps 70-290 | AQRL-SIMU, steps 90-230 |
-| Ring | 4 accounts, 4 declared owners, one controller. Hub-and-spoke: the hub trades with each spoke in conspicuous sizes (equity 10-18 lots, crypto 30-50) inside the spread; the resting side is a real limit order; positions are steered back to flat; 3 scheduled crude self-crosses; 8% one-sided market orders. Spokes share a funding account (equity) / wallet + API-key lineage chain (crypto). The hub shares only two weak attributes with one spoke. |
-| Pump target | VLDN (thin float): accumulate quietly (steps 60-150, passive bids), ramp (150-240, market buys, across sessions), distribute (from 240, passive offers then market sells) into a retail crowd | BLXT-SIMU: accumulate 100-236, ramp 240-264 starting at the "signal" (`episode.signalMs`), distribute from 264 |
-| Pump group | 3 accounts, one funding account | 3 accounts, withdrawal address + funding wallet chain |
-| Crowd | `hype`: all retail buy at market 235-290 (promotion crowd); momentum followers also join on sharp rises | `hype` 262-292 |
-| Benign shock | TMRX, +13% news jump at step 200, broad retail participation | DRNO-SIMU, +9% at step 150 |
-| Maker transfers | NBLE (quiet control): sub-accounts cross inside the spread at steps 140-141 and 335 | ELVY-SIMU at steps 190-191 and 320 |
-| Controls | NBLE low volatility; HZPK high volatility and high volume | ELVY-SIMU; FQRX-SIMU |
-| False link | two honest retail accounts share one `brokerBranch` | two share one `ip` |
+| Steps | 6 sessions x 60 steps of 5 min, bin 30 min; session 0 clean | 360 steps of 15 s, bin 1 min; first 20 min clean |
+| Wash | QFRO.SIM steps 70-290. Hub-and-spoke ring; 15% spoke-spoke crosses, 1% random self-cross, 8% one-sided market orders; hub reachable only by two weak attributes | AQRL-SIMU steps 90-230, same ring design |
+| Pump | VLDN.SIM: accumulate 60-150, ramp 150-240, distribute from 240 | BLXT-SIMU: accumulate 100-236, ramp 240-264 (signal at `episode.signalMs`), distribute from 264 |
+| Shock | TMRX.SIM +13% at step 200 | DRNO-SIMU +9% at step 150 |
+| Maker crosses | NBLE.SIM steps 140-141, 335 | ELVY-SIMU steps 190-191, 320 |
+| Controls | NBLE.SIM low volatility, HZPK.SIM high | ELVY-SIMU, FQRX-SIMU |
 
-Designed outcomes at default settings: both episodes alerted; W2 alerts on the maker transfers (false positive, cause
-`market-maker-subaccounts`); P1 alerts on the news jump (cause `benign-shock`); P2 does not fire on it (no group dominates the buying).
-Strict linkage leaves the hub as its own cluster and W2 finds nothing for the ring. The loosest linkage clusters the honest pair but
-that pair never produces an alert, because they barely trade each other. A global P1 baseline adds several false alerts on the volatile control.
-Overall recall stays 1.0 under strict linkage because the ring's crude self-trades still raise W1 alerts; the W2-specific recall is what drops.
-The W2 sweep on `w2InstrumentShare` shows the trade-off: low values alert on maker transfers, about 0.7 keeps the ring only, 0.9+ loses the ring.
-Maker transfers and the ring are close on this metric and separate only by linkage context and the cluster's other activity.
+The promotion crowd is scripted: a `hype` event makes all retail accounts buy at market for a while after the ramp (equity steps 235-290,
+crypto 262-292). The pump group's profit from selling into it is therefore assumed by the scenario, not an emergent result.
 
-## Ground-truth structure
+## Seed scan (100 seeds, defaults) and what it means
 
-`episodes`: `EP-WASH-1` (accounts, hub, controller, `window` from the first to last internal trade, `plantedTradeIds`, stats:
-`internalQty, internalTrades, selfTrades, internalShareOfInstrumentVolume, internalShareOfRingVolume, finalPositions`), `EP-PUMP-1`
-(accounts, `window`, `phases`, `signalMs`, stats: `pnlTicksQty, cashTicksQty, closingPosition, markPrice`).
-`decoys`: `DEC-MM-n` (maker sub-account transfers), `DEC-SHOCK-1` (news jump), `DEC-LINK-1` (honest pair and the shared attribute).
+Detection targets (both episodes found by the pattern rules, an EXPLAINABLE alert, shock on P1 and quiet on P2): equity 99 of 100 (seed 76 has
+no same-owner-cross alert), crypto 100 of 100. At group level: median 5 groups (3 MATCH, 1 EXPLAINABLE, 1 UNRELATED); precision(MATCH)
+median 0.60, precision(MATCH+EXPLAINABLE) 0.80; recall 1.0. Across 100 seeds `npm run seeds` prints the full table. At the default policy,
+unrelated alerts are almost all the news shock (a handful of `natural-move` alerts); background collisions show up under loose linkage.
+
+Linkage policy distributions (100 seeds; mean, W2 = episodes found by W2):
+
+| config | policy | W2 found | episodes found | unrelated groups | largest cluster | false-linked pairs |
+|---|---|---|---|---|---|---|
+| equity | strong1 | 0.12 | 1.12 | 1.02 | 3 | 2 |
+| equity | weak2 | 1.00 | 2.00 | 1.02 | 4 | 4.4 |
+| equity | weak1 | 1.00 | 2.00 | 5.30 | 42.8 | 596 |
+| crypto | strong1 | 0.26 | 1.26 | 1.00 | 3 | 2 |
+| crypto | weak2 | 1.00 | 2.00 | 1.01 | 4.0 | 4.4 |
+| crypto | weak1 | 1.00 | 2.00 | 3.86 | 18.0 | 114 |
+
+Strict linkage misses the ring most of the time, loose linkage merges honest accounts into giant clusters, loses the EXPLAINABLE
+alert (the maker cluster is no longer only the maker) and raises unrelated groups.
+
+Baseline honesty. The defaults coincide with the scenario's clean period: `warmup` uses the first N bins, which no planted episode touches. A
+baseline that spans the episodes hides the pump. Measured over 100 seeds (mean pump found by P1; equity / crypto): warm-up default N 1.00 / 1.00;
+trailing default N 1.00 / 1.00; warm-up with N covering the episodes (55 / 80 bins) 0.35 / 0.61; trailing with long N (30 / 40) 1.00 / 1.00.
+Trailing is not contaminated here because the history before each planted episode is quiet; a real desk's history is not.
+
+## Notes on behaviour you may see in charts
+
+- Sweeps once looked non-monotonic because raising a threshold can split one merged run into two alerts. Group-level counting hides this; chart groups.
+- A one-step news jump can outscore a multi-bin pump ramp on `moveScore`. P1 sees size and volume, not cause: it is blind to why a name moved.
+- The W2 sweep on `w2InstrumentShare`: low values alert on same-owner crosses and the ring; a middle value keeps the ring only (equity about 0.8, crypto 0.7-0.9); 0.95+ loses the ring. The separation is narrow and seed dependent.
+- Calibration is by seed scan (above), not by a claim that every seed holds.
 
 ## What this does not model
 
-- No real exchange rules: the band, lot and tick handling are a simplified "IDX-style" flavour. No auctions, halts, circuit breakers, order types beyond limit and market, iceberg, stop or post-only flags (maker post-only is agent behaviour).
-- No self-trade prevention, no margin or borrowing limits (accounts can go short), no fees, no settlement, no cross-venue or derivatives activity.
-- No order-level spoofing or layering, no marking the close, no front-running, no insider information, no real news timing.
-- Linkage uses only the register attributes; no behavioural or graph-embedding similarity, no data-quality noise in the register.
-- Only one wash episode and one pump episode per config; detection windows are whole bins, so timing resolution is one bin.
-- Agents are simple rules with random draws (retail flow is memoryless apart from momentum followers); price formation is a stylised random-walk fair value that quotes drift towards.
-- Baselines use a clean warm-up that the planted episodes avoid by construction; a real desk must build baselines from contaminated history.
-- Precision and recall are over a handful of alerts per run: use many seeds before reading anything into one number.
-- Floats are used for sampling and for statistics (z-scores, shares); money (prices, quantities, notional, cash, P&L) is integer throughout.
+- No real exchange rules (band, lot, tick are simplified); no auctions, halts, other order types, self-trade prevention, margin, fees, settlement, cross-venue or derivatives activity.
+- No spoofing, layering, marking the close, front-running or insider information.
+- Linkage uses register attributes only; the register has no data-quality noise beyond the pooled collisions.
+- One wash episode and one pump episode per config; timing resolution is one bin.
+- Agents are simple rules with random draws; price formation is a stylised random-walk fair value that quotes drift towards.
+- Counterparty-concentration and behavioural similarity rules are absent.
+- Floats are used for sampling and statistics; money (prices, quantities, notional, cash, P&L) is integer.
+
+## Changes from 1.0.0 (UI migration list)
+
+- `MODEL_VERSION` is `surv-model-1.1.0`. `runScenario` results are deep-frozen.
+- Equity instrument ids gain `.SIM` (`QFRO` -> `QFRO.SIM`). `market.label` no longer says IDX. The band now also limits market orders; new cancel reason `BAND_REPRICE`.
+- `register.schema[]` gains `rationale`, `caveat`. Crypto: `kycIdentity` -> `controllingPerson` (and `ownerAttribute`); `withdrawalAddress` is now weak. Account `type` is random (`corporate` no longer marks planted accounts).
+- `score` is replaced: removed `overall.{tp,fp,fn,precision,recall}` flat fields, `byRule.W1`, `fpCauses`, `fpCausesByRule`, `episodes` per rule as a number, `detected`. New: `overall`/`byRule` nested `alerts, groups, episodes, precision.{alert,group}.{match,matchOrExplainable}, recall`; `selfMatch`; `decoysAlerted`; `causes`; `causesByRule`. `byEpisode.detectedBy` never lists W1. `overall` covers W2, P1, P2 only.
+- `labels[id].label`: `TP` -> `MATCH`; `FP` -> `EXPLAINABLE` (same-owner crosses, cause `same-owner-cross`, was `market-maker-subaccounts`) or `UNRELATED`; W1 alerts are `SELF_MATCH`. Causes: `natural-volatility-or-volume` -> `natural-move`; `coincidental-link`, `benign-shock` kept; new `background-collision`.
+- Sweep rows: `{value, overall, byRule, fpCauses}` -> `{value, episodesFound, episodesMissed, decoysAlerted, groups, alerts, precision, recall, overall, byRule, selfMatch, causes, linkage?}`. Linkage summary adds `largestCluster, designedPairsLinked, falseLinkedPairs`; `falseLinkAlerts` counts UNRELATED alerts on the single-attribute pair.
+- Alert metrics: W2 `internalShareOfClusterVolume` -> `clusterInternalShare`, `internalShareOfInstrumentVolume` -> `instrumentInternalShare`, `netPositionRatio` -> `netChangeOverInternal` (new definition). P1 `zReturn` -> `moveScore`, `baselineSigma` -> `baselineVolatility`, new `baselineBins`, `baselineSource`; id third segment `-` -> `up`/`down`; `direction` is per alert and rising and falling alerts are separate. P2 adds `accumulationNetQty`, `accumulationBuyShareOfVolume`, `lookbackWindow`; only on rising P1.
+- Thresholds: `p1ZRet` -> `p1MoveScore`; new `p1Baseline`; `w2NetRatio` redefined (default 0.6); `w1MergeBins` now counts bins in the rule (values unchanged).
+- Ground truth: roles of planted accounts get `planted-` (`wash-ring-spoke` -> `planted-wash-ring-spoke`, `market-maker-sub` -> `planted-maker-sub-account`, etc.); new roles `honest-algo`, `honest-family-pair`, `honest-household-pair`. Decoy type `market-maker-subaccount-transfer` -> `same-owner-cross`; new decoys `DEC-FAMILY-n`, `DEC-HOUSEHOLD-n`, `DEC-ALGO-1`. Wash stats `internalShareOfInstrumentVolume` -> `internalShareOfInstrumentQty`, `internalShareOfRingVolume` -> `internalShareOfRingSideVolume`.
+- `caseView`: accounts add `aggressiveBuyQty`, `aggressiveSellQty`; P1 cases list sellers too; `groundTruth.label` uses the new labels.
+- New exports: `seedStudy`, `detect`, `detectionContext`, `detectionTargets`, `PATTERN_RULES`; `npm run seeds`.
+- Scenario: ring no longer has scheduled self-crosses (15% spoke-spoke crosses instead); honest algo accounts self-match occasionally; background attribute collisions, family and household pairs added.

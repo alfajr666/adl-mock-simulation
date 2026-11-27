@@ -29,7 +29,7 @@ test('naming: alerts are leads, never findings; no claim of detected manipulatio
 });
 
 test('no real exchange, broker, token or person is named in engine code or generated data', () => {
-  const real = ['binance', 'coinbase', 'kraken', 'nasdaq', 'nyse', 'bitcoin', 'ethereum', 'tether', 'usdt', 'idx.co', 'bursa', 'robinhood', 'sec.gov', 'ojk'];
+  const real = ['binance', 'coinbase', 'kraken', 'nasdaq', 'nyse', 'bitcoin', 'ethereum', 'tether', 'usdt', 'idx.co', 'bursa', 'robinhood', 'sec.gov', 'ojk', 'idx', 'bursa efek'];
   for (const f of files) {
     const src = fs.readFileSync(path.join(dir, f), 'utf8').toLowerCase();
     for (const w of real) assert.ok(!src.includes(w), `${f} names ${w}`);
@@ -37,7 +37,7 @@ test('no real exchange, broker, token or person is named in engine code or gener
   for (const id of CONFIG_IDS) {
     const r = runScenario(id, { seed: 1 });
     const text = JSON.stringify([r.market, r.register]).toLowerCase();
-    for (const w of real) assert.ok(!text.includes(w));
+    for (const w of real) assert.ok(!text.includes(w), w);
     assert.ok(r.market.instruments.every((d) => /fictional/.test(d.name)), 'instrument names are marked fictional');
   }
 });

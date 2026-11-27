@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Two synthetic markets for practising trade-surveillance judgement: alerts are leads, account linkage does the real work, and every threshold trades missed abuse against false alarms.">
+  <meta name="description" content="Two synthetic markets for practising trade-surveillance judgement: alerts are leads, account linkage does the real work, and every threshold trades missed episodes against unrelated alerts.">
   <title>Trade-surveillance simulator — alerts are leads</title>
   <link rel="stylesheet" href="ui/styles.css">
 </head>
@@ -29,14 +29,14 @@
         <article class="card">
           <div class="eyebrow">Simulator 1</div>
           <h2>Equity board</h2>
-          <p class="muted">Five fictional listed companies over six sessions, with round lots and a daily price band, in an “IDX-style” flavour. Accounts link through declared owners, funding bank accounts, broker branches and devices.</p>
+          <p class="muted">Five fictional listed companies over six sessions, a lot-100, daily-band equity board, loosely after Indonesian market conventions. Accounts link through declared owners, funding bank accounts, broker branches and devices.</p>
           <ul><li>Venue actions: unusual-activity notice, suspension, move to call auction</li><li>Plus escalate, or file a suspicious-order report</li></ul>
           <a class="button primary" href="equity.html">Open the equity board</a>
         </article>
         <article class="card">
           <div class="eyebrow">Simulator 2</div>
           <h2>Crypto spot venue</h2>
-          <p class="muted">Five fictional tokens over ninety continuous minutes, with no band and a finer tick. Accounts link through verified identities, wallets, withdrawal addresses, API-key lineage, devices and IP addresses.</p>
+          <p class="muted">Five fictional tokens over ninety continuous minutes, with no band and a finer tick. Accounts link through controlling persons, funding wallets, API-key lineage, withdrawal addresses, devices and IP addresses.</p>
           <ul><li>Venue actions: restrict an account, widen monitoring</li><li>Plus escalate, or file a suspicious-order report</li></ul>
           <a class="button primary" href="crypto.html">Open the crypto venue</a>
         </article>
@@ -46,9 +46,9 @@
     <section aria-labelledby="learn-h" class="section-gap">
       <h2 id="learn-h">Three things it is built to show</h2>
       <div class="three">
-        <div><h3>Alerts are leads</h3><p>The same rules fire on a planted ring and on two sub-accounts of one market maker moving inventory. Only context separates them, and context takes a person.</p></div>
-        <div><h3>Linkage does the real work</h3><p>Look at accounts one at a time and a hidden group looks like four ordinary traders. Change how strictly accounts are linked and an entire episode can appear or vanish.</p></div>
-        <div><h3>Every threshold is a trade</h3><p>Tighten a limit and false alarms fall, until real episodes fall with them. Sweep a setting, then check it on eight seeds before trusting one run.</p></div>
+        <div><h3>Alerts are leads</h3><p>The same rules fire on a planted ring and on two sub-accounts of one market maker moving inventory. Same-owner trades look like wash trades in form; only context separates them, and context takes a person.</p></div>
+        <div><h3>Linkage does the real work</h3><p>Look at accounts one at a time and a hidden group looks like four ordinary traders. Change how strictly accounts are linked and an episode can vanish, or dozens of honest accounts can merge into one group.</p></div>
+        <div><h3>Every threshold is a trade</h3><p>Tighten a limit and unrelated alerts fall, until real episodes fall with them. Sweep a setting, then check it across thirty seeds before trusting one run.</p></div>
       </div>
     </section>
 
@@ -58,7 +58,7 @@
         <li>Scan the market tape and open an alert from the queue.</li>
         <li>Read its case file: price and volume, account register, link graph, supporting trades, group position and profit and loss.</li>
         <li>Record a decision: close, keep monitoring, or escalate.</li>
-        <li>Reveal what was planted for that alert, or show the whole answer key for the scorecard and the trade-off explorer.</li>
+        <li>Reveal what was planted for that alert, or show the whole answer key for the group-level scorecard and the trade-off explorer.</li>
       </ol>
     </section>
 

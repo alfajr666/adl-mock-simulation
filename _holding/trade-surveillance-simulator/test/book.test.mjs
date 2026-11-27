@@ -69,6 +69,58 @@ test('band and lot-size rejections are logged on the tape', () => {
   assert.equal(ex.rejections.LOT, 1);
 });
 
+test('market orders respect the daily band; stale resting orders outside a new band are cancelled', () => {
+  const ex = mk({ bandPct: 0.2, lotSize: 1, ref: 1000 });
+  ex.submit(o('A', 'S', 'L', 1190, 5));
+  ex.submit(o('A', 'S', 'L', 1250 > 1200 ? 1200 : 1250, 5));      // inside the band
+  ex.setReference('X', 900);                                       // new band 720..1080: both asks are now stale
+  assert.equal(ex.bestAsk('X'), null);
+  assert.deepEqual(ex.cancels.map((c) => c.reason), ['BAND_REPRICE', 'BAND_REPRICE']);
+  ex.setReference('X', 1000);
+  ex.submit(o('A', 'S', 'L', 1100, 5));
+  ex.setReference('X', 1000);
+  const r = ex.submit(o('B', 'B', 'M', null, 3));
+  assert.equal(r.filled, 3);
+  assert.ok(r.trades.every((t) => t.price >= 800 && t.price <= 1200));
+});
+
+test('quantity conservation: filled + cancelled + still resting = submitted for every accepted order', () => {
+  const ex = mk();
+  const rng = new Rng(777);
+  for (let i = 0; i < 2000; i++) {
+    ex.beginStep(1000 + i * 10, 10);
+    if (rng.chance(0.2) && ex.live.size) { ex.cancel([...ex.live.keys()][rng.int(0, ex.live.size - 1)]); continue; }
+    ex.submit(o(rng.pick(['A', 'B', 'C']), rng.chance(0.5) ? 'B' : 'S', rng.chance(0.2) ? 'M' : 'L', 92 + rng.int(0, 16), rng.int(1, 9)));
+  }
+  const filled = new Map(), cancelled = new Map();
+  for (const t of ex.trades) { filled.set(t.buyOrderId, (filled.get(t.buyOrderId) || 0) + t.qty); filled.set(t.sellOrderId, (filled.get(t.sellOrderId) || 0) + t.qty); }
+  for (const c of ex.cancels) cancelled.set(c.orderId, (cancelled.get(c.orderId) || 0) + c.qty);
+  let checked = 0;
+  for (const ord of ex.orders) {
+    if (ord.status !== 'accepted') continue;
+    const resting = ex.live.has(ord.id) ? ex.live.get(ord.id).rem : 0;
+    assert.equal((filled.get(ord.id) || 0) + (cancelled.get(ord.id) || 0) + resting, ord.qty, `order ${ord.id}`);
+    checked++;
+  }
+  assert.ok(checked > 1000);
+});
+
+test('every trade prints within the limit prices of both orders', () => {
+  const ex = mk();
+  const rng = new Rng(4242);
+  for (let i = 0; i < 2000; i++) {
+    ex.beginStep(1000 + i * 10, 10);
+    ex.submit(o(rng.pick(['A', 'B', 'C']), rng.chance(0.5) ? 'B' : 'S', rng.chance(0.2) ? 'M' : 'L', 92 + rng.int(0, 16), rng.int(1, 9)));
+  }
+  const byId = new Map(ex.orders.map((x) => [x.id, x]));
+  for (const t of ex.trades) {
+    const b = byId.get(t.buyOrderId), s = byId.get(t.sellOrderId);
+    if (b.type === 'L') assert.ok(t.price <= b.price);
+    if (s.type === 'L') assert.ok(t.price >= s.price);
+  }
+  assert.ok(ex.trades.length > 300);
+});
+
 test('every event carries account, side, price/qty, timestamp and a strictly increasing sequence', () => {
   const ex = mk();
   ex.submit(o('A', 'S', 'L', 100, 5));

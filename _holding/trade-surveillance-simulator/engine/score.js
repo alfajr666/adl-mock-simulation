@@ -6,6 +6,8 @@ import { timeOfStep } from './agents.js';
 
 export const RULE_TARGETS = { W1: 'wash', W2: 'wash', P1: 'pump', P2: 'pump' };
 export const RULES = ['W1', 'W2', 'P1', 'P2'];
+/** Pattern rules are scored against planted episodes; W1 is scored separately as self-match hygiene. */
+export const PATTERN_RULES = ['W2', 'P1', 'P2'];
 
 export function buildGroundTruth(scn, sim) {
   const S = scn.session, T = scn.truth, trades = sim.tape.trades;
@@ -27,8 +29,8 @@ export function buildGroundTruth(scn, sim) {
     stats: {
       internalQty, internalTrades: wash.length, selfTrades: wash.filter((t) => t.buyAcct === t.sellAcct).length,
       instrumentQtyInWindow: washInstQty,
-      internalShareOfInstrumentVolume: internalQty / washInstQty,
-      internalShareOfRingVolume: (2 * internalQty) / ringVolume,
+      internalShareOfInstrumentQty: internalQty / washInstQty,          // internal qty (each trade once) / all qty in the instrument over the episode window
+      internalShareOfRingSideVolume: (2 * internalQty) / ringVolume,    // internal volume counted on both sides / all volume on ring accounts' sides
       finalPositions: Object.fromEntries(scn.ring.accts.map((a) => [a, (sim.ledger.positions[a] || {})[T.washInstrument] || 0])),
     },
   });
@@ -60,7 +62,7 @@ export function buildGroundTruth(scn, sim) {
     for (const set of mmSets) {
       if (t.buyAcct !== t.sellAcct && set.has(t.buyAcct) && set.has(t.sellAcct)) {
         if (!cur || t.t - cur.endMs > 6 * S.binSteps * S.stepMs) {
-          cur = { id: `DEC-MM-${++n}`, type: 'market-maker-subaccount-transfer', instrument: T.transferInstrument, accounts: [...set], window: { startMs: t.t, endMs: t.t + 1 }, tradeIds: [] };
+          cur = { id: `DEC-MM-${++n}`, type: 'same-owner-cross', instrument: T.transferInstrument, accounts: [...set], window: { startMs: t.t, endMs: t.t + 1 }, tradeIds: [] };
           decoys.push(cur);
         }
         cur.window.endMs = t.t + 1; cur.endMs = t.t; cur.tradeIds.push(t.id);
@@ -75,6 +77,9 @@ export function buildGroundTruth(scn, sim) {
     jump: news.jump,
   });
   decoys.push({ id: 'DEC-LINK-1', type: 'coincidental-shared-attribute', accounts: [...T.falsePair], attribute: T.falseLinkAttribute, instrument: null, window: null });
+  T.familyPairs.forEach((p, i) => decoys.push({ id: `DEC-FAMILY-${i + 1}`, type: 'unrelated-shared-strong-attribute', accounts: [...p], instrument: null, window: null }));
+  T.householdPairs.forEach((p, i) => decoys.push({ id: `DEC-HOUSEHOLD-${i + 1}`, type: 'unrelated-shared-weak-attributes', accounts: [...p], instrument: null, window: null }));
+  decoys.push({ id: 'DEC-ALGO-1', type: 'honest-self-match', accounts: [...T.algos], instrument: null, window: null });
 
   return {
     note: 'Ground truth for scoring and teaching only. The detector never reads this.',
@@ -86,63 +91,96 @@ export function buildGroundTruth(scn, sim) {
 }
 
 const overlaps = (a, b) => a.startMs < b.endMs && b.startMs < a.endMs;
+const LINK_DECOYS = new Set(['coincidental-shared-attribute', 'unrelated-shared-strong-attribute', 'unrelated-shared-weak-attributes']);
 
+/** Label one alert. W1 is hygiene (SELF_MATCH); other rules are MATCH / EXPLAINABLE / UNRELATED. */
 function mapAlert(alert, gt) {
+  const roles = gt.accountRoles;
+  if (alert.rule === 'W1') {
+    const planted = alert.accounts.some((a) => (roles[a] || '').startsWith('planted-'));
+    const algo = alert.accounts.some((a) => roles[a] === 'honest-algo');
+    return { label: 'SELF_MATCH', episodeIds: [], decoyIds: planted ? [] : algo ? ['DEC-ALGO-1'] : [], cause: planted ? 'planted-account' : algo ? 'honest-algo' : 'other-account' };
+  }
   const hits = [];
   for (const ep of gt.episodes) {
     if (RULE_TARGETS[alert.rule] !== ep.type || alert.instrument !== ep.instrument || !overlaps(alert.window, ep.window)) continue;
     const common = alert.accounts.filter((a) => ep.accounts.includes(a)).length;
-    if (alert.rule === 'W1' && common < 1) continue;
     if (alert.rule === 'W2' && common < 2) continue;
     if (alert.rule === 'P2' && common < 1) continue;
     hits.push(ep.id);
   }
-  if (hits.length) return { label: 'TP', episodeIds: hits, cause: null, decoyIds: [] };
-  let cause = 'unattributed', decoyIds = [];
-  const share = (d) => alert.accounts.filter((a) => d.accounts.includes(a)).length;
+  if (hits.length) return { label: 'MATCH', episodeIds: hits, cause: null, decoyIds: [] };
+  const decoyIds = [];
   for (const d of gt.decoys) {
-    if (d.type === 'market-maker-subaccount-transfer' && alert.rule === 'W2' && d.instrument === alert.instrument && share(d) >= 2 && overlaps(alert.window, d.window)) { cause = 'market-maker-subaccounts'; decoyIds.push(d.id); }
-    if (d.type === 'benign-news-shock' && alert.rule.startsWith('P') && d.instrument === alert.instrument && overlaps(alert.window, d.window)) { cause = 'benign-shock'; decoyIds.push(d.id); }
-    if (d.type === 'coincidental-shared-attribute' && alert.rule === 'W2' && share(d) >= 2) { cause = 'coincidental-link'; decoyIds.push(d.id); }
+    if (d.type === 'same-owner-cross' && alert.rule === 'W2' && d.instrument === alert.instrument && overlaps(alert.window, d.window)
+      && alert.accounts.length >= 2 && alert.accounts.every((a) => d.accounts.includes(a))) decoyIds.push(d.id);
   }
-  if (cause === 'unattributed' && alert.rule === 'P1') cause = 'natural-volatility-or-volume';
-  return { label: 'FP', episodeIds: [], cause, decoyIds };
+  if (decoyIds.length) return { label: 'EXPLAINABLE', episodeIds: [], cause: 'same-owner-cross', decoyIds };
+  let cause = 'unattributed';
+  for (const d of gt.decoys) {
+    if (d.type === 'benign-news-shock' && alert.rule !== 'W2' && d.instrument === alert.instrument && overlaps(alert.window, d.window)) { cause = 'benign-shock'; decoyIds.push(d.id); }
+    if (LINK_DECOYS.has(d.type) && alert.accounts.length >= 2 && alert.accounts.every((a) => d.accounts.includes(a))) { cause = 'coincidental-link'; decoyIds.push(d.id); }
+  }
+  if (cause === 'unattributed') {
+    if (alert.rule === 'P1') cause = 'natural-move';
+    else if (alert.accounts.length >= 2 && alert.accounts.some((a) => !(roles[a] || '').startsWith('planted-'))) cause = 'background-collision';
+  }
+  return { label: 'UNRELATED', episodeIds: [], cause, decoyIds };
 }
 
 const ratio = (n, d) => (d === 0 ? null : n / d);
 
+/** Alert-level and group-level counts for a set of alerts. Groups are (rule, episode | explainable-instrument | unrelated-instrument). */
+function summarize(list, labels, plantedEpisodes) {
+  const count = (l) => list.filter((a) => labels[a.id].label === l).length;
+  const alerts = { total: list.length, match: count('MATCH'), explainable: count('EXPLAINABLE'), unrelated: count('UNRELATED') };
+  const keys = { MATCH: new Set(), EXPLAINABLE: new Set(), UNRELATED: new Set() };
+  for (const a of list) {
+    const l = labels[a.id];
+    keys[l.label].add(`${a.rule}|${l.label === 'MATCH' ? l.episodeIds.join('+') : a.instrument}`);
+  }
+  const groups = { total: keys.MATCH.size + keys.EXPLAINABLE.size + keys.UNRELATED.size, episodeMatches: keys.MATCH.size, explainable: keys.EXPLAINABLE.size, unrelated: keys.UNRELATED.size };
+  const found = new Set(list.flatMap((a) => labels[a.id].episodeIds));
+  const episodes = { planted: plantedEpisodes.length, found: found.size, missed: plantedEpisodes.length - found.size };
+  return {
+    alerts, groups, episodes,
+    precision: {
+      alert: { match: ratio(alerts.match, alerts.total), matchOrExplainable: ratio(alerts.match + alerts.explainable, alerts.total) },
+      group: { match: ratio(groups.episodeMatches, groups.total), matchOrExplainable: ratio(groups.episodeMatches + groups.explainable, groups.total) },
+    },
+    recall: ratio(found.size, plantedEpisodes.length),
+  };
+}
+
 export function scoreAlerts(alerts, gt) {
   const labels = {};
   for (const a of alerts) labels[a.id] = mapAlert(a, gt);
+  const pattern = alerts.filter((a) => a.rule !== 'W1');
   const byRule = {};
-  for (const rule of RULES) {
-    const mine = alerts.filter((a) => a.rule === rule);
-    const tp = mine.filter((a) => labels[a.id].label === 'TP');
-    const targeted = gt.episodes.filter((e) => e.type === RULE_TARGETS[rule]);
-    const detected = new Set(tp.flatMap((a) => labels[a.id].episodeIds));
-    byRule[rule] = {
-      alerts: mine.length, tp: tp.length, fp: mine.length - tp.length,
-      episodes: targeted.length, detected: detected.size, fn: targeted.length - detected.size,
-      precision: ratio(tp.length, mine.length), recall: ratio(detected.size, targeted.length),
-    };
+  for (const rule of PATTERN_RULES) byRule[rule] = summarize(alerts.filter((a) => a.rule === rule), labels, gt.episodes.filter((e) => e.type === RULE_TARGETS[rule]));
+  const overall = summarize(pattern, labels, gt.episodes);
+  const w1 = alerts.filter((a) => a.rule === 'W1');
+  const flagged = new Set(w1.flatMap((a) => a.accounts));
+  const selfMatch = {
+    note: 'Self-match hygiene (W1). Not part of overall, byRule or episode recall.',
+    alerts: w1.length,
+    onPlantedAccounts: w1.filter((a) => labels[a.id].cause === 'planted-account').length,
+    onHonestAlgoAccounts: w1.filter((a) => labels[a.id].cause === 'honest-algo').length,
+    onOtherAccounts: w1.filter((a) => labels[a.id].cause === 'other-account').length,
+    accountsFlagged: flagged.size,
+  };
+  const causes = {}, causesByRule = {};
+  for (const a of pattern) {
+    const l = labels[a.id];
+    if (l.label === 'MATCH') continue;
+    causes[l.cause] = (causes[l.cause] || 0) + 1;
+    const k = `${a.rule}:${l.cause}`; causesByRule[k] = (causesByRule[k] || 0) + 1;
   }
-  const tpAll = alerts.filter((a) => labels[a.id].label === 'TP');
-  const detectedAll = new Set(tpAll.flatMap((a) => labels[a.id].episodeIds));
-  const fpCauses = {};
-  for (const a of alerts) if (labels[a.id].label === 'FP') { const c = labels[a.id].cause; fpCauses[c] = (fpCauses[c] || 0) + 1; }
   const byEpisode = gt.episodes.map((e) => ({
     episodeId: e.id, type: e.type,
-    detectedBy: RULES.filter((r) => alerts.some((a) => a.rule === r && labels[a.id].episodeIds.includes(e.id))),
-    missed: !detectedAll.has(e.id),
+    detectedBy: PATTERN_RULES.filter((r) => pattern.some((a) => a.rule === r && labels[a.id].episodeIds.includes(e.id))),
+    missed: !pattern.some((a) => labels[a.id].episodeIds.includes(e.id)),
   }));
-  const fpCausesByRule = {};
-  for (const a of alerts) if (labels[a.id].label === 'FP') { const k = `${a.rule}:${labels[a.id].cause}`; fpCausesByRule[k] = (fpCausesByRule[k] || 0) + 1; }
-  return {
-    overall: {
-      alerts: alerts.length, tp: tpAll.length, fp: alerts.length - tpAll.length,
-      episodes: gt.episodes.length, detected: detectedAll.size, fn: gt.episodes.length - detectedAll.size,
-      precision: ratio(tpAll.length, alerts.length), recall: ratio(detectedAll.size, gt.episodes.length),
-    },
-    byRule, byEpisode, fpCauses, fpCausesByRule, labels,
-  };
+  const decoysAlerted = [...new Set(pattern.flatMap((a) => labels[a.id].decoyIds))].sort();
+  return { overall, byRule, selfMatch, byEpisode, decoysAlerted, causes, causesByRule, labels };
 }

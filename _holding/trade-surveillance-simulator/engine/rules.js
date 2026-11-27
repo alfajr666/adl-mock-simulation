@@ -7,7 +7,7 @@
  * (see DEFAULTS in index.js); nothing is hard-coded in the rule functions.
  *
  * Windows are made of whole bins; consecutive flagged windows are merged into
- * one alert. Alerts are leads for review.
+ * one alert (so one episode can split into several alerts; scoring groups them). Alerts are leads for review.
  */
 
 // ---- prepared per-instrument bars (computed once per tape) -------------
@@ -60,7 +60,6 @@ function mergeRuns(flags, gap = 0) {   // flags[i] = start index of a flagged wi
 // ---- W1: self-trade -----------------------------------------------------
 export function ruleW1(ctx, th) {
   const { market, trades } = ctx;
-  const binMs = market.binMs;
   const groups = new Map();
   for (const tr of trades) {
     if (tr.buyAcct !== tr.sellAcct) continue;
@@ -73,7 +72,7 @@ export function ruleW1(ctx, th) {
     const runs = [];
     for (const tr of list) {
       const last = runs[runs.length - 1];
-      if (last && tr.t - last.end <= th.w1MergeBins * binMs) { last.trades.push(tr); last.end = tr.t; }
+      if (last && market.binIndexOf(tr.t) - market.binIndexOf(last.end) <= th.w1MergeBins) { last.trades.push(tr); last.end = tr.t; }
       else runs.push({ start: tr.t, end: tr.t, trades: [tr] });
     }
     const [acct, inst] = k.split('|');
@@ -136,11 +135,11 @@ export function ruleW2(ctx, th, linkage) {
       for (let j = i; j < i + w; j++) { I += s.internal[j]; E += s.external[j]; B += s.buy[j]; S += s.sell[j]; V += instQty[j]; }
       if (I === 0 || I < th.w2MinInternalLots * lotSize) continue;
       const share = I / (I + E);
-      const net = B + S === 0 ? 0 : Math.abs(B - S) / (B + S);
+      const net = Math.abs(B - S) / I;                  // net position change over the window, relative to internal volume
       const instShare = V === 0 ? 0 : I / V;
       if (share >= th.w2ClusterShare && net <= th.w2NetRatio && instShare >= th.w2InstrumentShare) {
         flagged.push(i);
-        metricsAt[i] = { internalShareOfClusterVolume: share, netPositionRatio: net, internalShareOfInstrumentVolume: instShare, internalQty: I, externalQty: E };
+        metricsAt[i] = { clusterInternalShare: share, netChangeOverInternal: net, instrumentInternalShare: instShare, internalQty: I, externalQty: E };
       }
     }
     const cluster = linkage.clusters.find((c) => c.id === cid);
@@ -148,7 +147,7 @@ export function ruleW2(ctx, th, linkage) {
       const startBin = run.firstStart, endBin = run.endStart + w - 1;
       const t0 = market.bins[startBin].t0, t1 = market.bins[endBin].t1;
       let peak = flagged.find((i) => i >= run.firstStart);
-      for (const i of flagged) if (i >= run.firstStart && i <= run.endStart && metricsAt[i].internalShareOfInstrumentVolume > metricsAt[peak].internalShareOfInstrumentVolume) peak = i;
+      for (const i of flagged) if (i >= run.firstStart && i <= run.endStart && metricsAt[i].instrumentInternalShare > metricsAt[peak].instrumentInternalShare) peak = i;
       const set = new Set(cluster.accounts);
       const supTrades = trades.filter((tr) => tr.inst === inst && tr.t >= t0 && tr.t < t1 && set.has(tr.buyAcct) && set.has(tr.sellAcct));
       const sup = supTrades.map((tr) => tr.id);
@@ -160,9 +159,9 @@ export function ruleW2(ctx, th, linkage) {
         accounts: [...cluster.accounts], cluster: { id: cid, accounts: [...cluster.accounts] },
         metrics: { ...m, windowBins: w, peakWindowStartMs: market.bins[peak].t0 },
         thresholdsCrossed: {
-          w2ClusterShare: { value: m.internalShareOfClusterVolume, threshold: th.w2ClusterShare },
-          w2NetRatio: { value: m.netPositionRatio, threshold: th.w2NetRatio },
-          w2InstrumentShare: { value: m.internalShareOfInstrumentVolume, threshold: th.w2InstrumentShare },
+          w2ClusterShare: { value: m.clusterInternalShare, threshold: th.w2ClusterShare },
+          w2NetRatio: { value: m.netChangeOverInternal, threshold: th.w2NetRatio },
+          w2InstrumentShare: { value: m.instrumentInternalShare, threshold: th.w2InstrumentShare },
         },
         supportingTradeIds: sup, supportingOrderIds: supOrders,
       });
@@ -172,15 +171,16 @@ export function ruleW2(ctx, th, linkage) {
 }
 
 // ---- P1: price-volume anomaly --------------------------------------------
-export function baselines(ctx, th) {
+// moveScore = size of the move relative to the instrument's baseline volatility
+//           = excursion / (baselineVolatility * sqrt(bins)). It is not a z-score.
+function baselineStats(ctx, lo, hi) {
   const { market, prep } = ctx;
-  const nb = Math.min(th.p1BaselineBins, market.bins.length);
   const per = {};
   for (const d of market.instruments) {
     const x = prep.bars[d.id];
     const r2 = [], notional = [];
-    let prev = d.refPrice0;
-    for (let b = 0; b < nb; b++) {
+    let prev = lo === 0 ? d.refPrice0 : x.close[lo - 1];
+    for (let b = lo; b <= hi; b++) {
       const r = (x.close[b] - prev) / prev;
       r2.push(r * r); notional.push(x.notional[b]); prev = x.close[b];
     }
@@ -196,56 +196,77 @@ export function ruleP1(ctx, th) {
   const { market, prep } = ctx;
   const nBins = market.bins.length;
   const w = th.p1WindowBins;
-  const base = baselines(ctx, th);
+  const N = Math.min(th.p1BaselineBins, nBins);
+  const warm = th.p1Baseline === 'warmup' ? baselineStats(ctx, 0, N - 1) : null;
   const alerts = [];
+  const trailingCache = new Map();
+  const baseFor = (i) => {
+    if (warm) return { st: warm, lo: 0, hi: N - 1 };
+    const lo = Math.max(0, i - N), hi = i - 1;
+    if (hi - lo + 1 < Math.min(4, N)) return null;           // not enough trailing history yet
+    const key = `${lo}:${hi}`;
+    if (!trailingCache.has(key)) trailingCache.set(key, baselineStats(ctx, lo, hi));
+    return { st: trailingCache.get(key), lo, hi };
+  };
   for (const d of market.instruments) {
     const x = prep.bars[d.id];
-    const bl = th.p1Mode === 'global' ? base.global : base.per[d.id];
-    const sigma = bl.sigma > 0 ? bl.sigma : 1e-9;
-    const v0 = bl.medianNotional > 0 ? bl.medianNotional : 1;
-    const flagged = [], at = {};
+    const flagged = { up: [], down: [] }, at = { up: {}, down: {} };
     for (let i = 0; i + w <= nBins; i++) {
+      const bf = baseFor(i);
+      if (!bf) continue;
+      const bl = th.p1Mode === 'global' ? bf.st.global : bf.st.per[d.id];
+      const vol = bl.sigma > 0 ? bl.sigma : 1e-9;
+      const v0 = bl.medianNotional > 0 ? bl.medianNotional : 1;
       const prev = i === 0 ? d.refPrice0 : x.close[i - 1];
-      // largest close-to-start excursion inside the window (keeps a spike-and-reversal in one window)
-      let ret = 0, N = 0;
+      // largest excursion from the window start, rising and falling tracked separately
+      let up = 0, down = 0, notionalSum = 0;
       for (let j = i; j < i + w; j++) {
         const r = (x.close[j] - prev) / prev;
-        if (Math.abs(r) > Math.abs(ret)) ret = r;
-        N += x.notional[j];
+        if (r > up) up = r;
+        if (-r > down) down = -r;
+        notionalSum += x.notional[j];
       }
-      const z = Math.abs(ret) / (sigma * Math.sqrt(w));
-      const mult = N / (w * v0);
-      if (z >= th.p1ZRet && mult >= th.p1VolMult && Math.abs(ret) * 10000 >= th.p1MinReturnBps) { flagged.push(i); at[i] = { returnBps: ret * 10000, zReturn: z, volumeMultiple: mult }; }
+      const mult = notionalSum / (w * v0);
+      for (const [dir, ex] of [['up', up], ['down', down]]) {
+        const score = ex / (vol * Math.sqrt(w));
+        if (score >= th.p1MoveScore && mult >= th.p1VolMult && ex * 10000 >= th.p1MinReturnBps) {
+          flagged[dir].push(i);
+          at[dir][i] = { returnBps: (dir === 'up' ? 1 : -1) * ex * 10000, moveScore: score, volumeMultiple: mult, baselineVolatility: vol, baselineMedianNotional: v0, baselineBins: { start: bf.lo, end: bf.hi } };
+        }
+      }
     }
-    for (const run of mergeRuns(flagged, th.p1MergeGapBins)) {
-      const startBin = run.firstStart, endBin = run.endStart + w - 1;
-      const t0 = market.bins[startBin].t0, t1 = market.bins[endBin].t1;
-      let peak = flagged.find((i) => i >= run.firstStart);
-      for (const i of flagged) if (i >= run.firstStart && i <= run.endStart && at[i].zReturn > at[peak].zReturn) peak = i;
-      const m = at[peak];
-      const sup = ctx.tradesByInst[d.id].filter((tr) => tr.t >= t0 && tr.t < t1).map((tr) => tr.id);
-      alerts.push({
-        id: `P1|${d.id}|-|${t0}`, rule: 'P1', instrument: d.id,
-        window: { startMs: t0, endMs: t1 },
-        accounts: [], cluster: null,
-        metrics: { ...m, direction: m.returnBps >= 0 ? 'up' : 'down', windowBins: w, baselineMode: th.p1Mode, baselineSigma: sigma, baselineMedianNotional: v0, startBin, endBin },
-        thresholdsCrossed: {
-          p1ZRet: { value: m.zReturn, threshold: th.p1ZRet },
-          p1VolMult: { value: m.volumeMultiple, threshold: th.p1VolMult },
-          p1MinReturnBps: { value: Math.abs(m.returnBps), threshold: th.p1MinReturnBps },
-        },
-        supportingTradeIds: sup, supportingOrderIds: [],
-      });
+    for (const dir of ['up', 'down']) {
+      for (const run of mergeRuns(flagged[dir], th.p1MergeGapBins)) {
+        const startBin = run.firstStart, endBin = run.endStart + w - 1;
+        const t0 = market.bins[startBin].t0, t1 = market.bins[endBin].t1;
+        let peak = flagged[dir].find((i) => i >= run.firstStart);
+        for (const i of flagged[dir]) if (i >= run.firstStart && i <= run.endStart && at[dir][i].moveScore > at[dir][peak].moveScore) peak = i;
+        const m = at[dir][peak];
+        const sup = ctx.tradesByInst[d.id].filter((tr) => tr.t >= t0 && tr.t < t1).map((tr) => tr.id);
+        alerts.push({
+          id: `P1|${d.id}|${dir}|${t0}`, rule: 'P1', instrument: d.id,
+          window: { startMs: t0, endMs: t1 },
+          accounts: [], cluster: null,
+          metrics: { ...m, direction: dir, windowBins: w, baselineMode: th.p1Mode, baselineSource: th.p1Baseline, startBin, endBin },
+          thresholdsCrossed: {
+            p1MoveScore: { value: m.moveScore, threshold: th.p1MoveScore },
+            p1VolMult: { value: m.volumeMultiple, threshold: th.p1VolMult },
+            p1MinReturnBps: { value: Math.abs(m.returnBps), threshold: th.p1MinReturnBps },
+          },
+          supportingTradeIds: sup, supportingOrderIds: [],
+        });
+      }
     }
   }
-  return alerts;
+  return alerts.sort((a, b) => a.window.startMs - b.window.startMs || (a.id < b.id ? -1 : 1));
 }
 
-// ---- P2: accumulate - ramp - distribute ----------------------------------
+// ---- P2: accumulate - ramp - distribute (runs on rising P1 alerts only) ---
 export function ruleP2(ctx, th, linkage, p1Alerts) {
   const { market, prep } = ctx;
   const alerts = [];
   for (const a of p1Alerts) {
+    if (a.metrics.direction !== 'up') continue;
     const inst = a.instrument;
     const lotSize = market.instrumentById[inst].lotSize;
     const x = prep.bars[inst];
@@ -260,7 +281,10 @@ export function ruleP2(ctx, th, linkage, p1Alerts) {
     const followEnd = Math.min(market.bins.length - 1, rampEnd + th.p2FollowBins);
     const rampT0 = market.bins[startBin].t0, rampT1 = market.bins[rampEnd].t1;       // ramp: window start .. end of ramp-end bin
     const folT0 = rampT1, folT1 = market.bins[followEnd].t1;
-    const lookT0 = market.bins[Math.max(0, startBin - th.p2LookbackBins)].t0;
+    const lookBin = Math.max(0, startBin - th.p2LookbackBins);
+    const lookT0 = market.bins[lookBin].t0;
+    let lookVol = 0;
+    for (let b = lookBin; b < startBin; b++) lookVol += x.qty[b];
     const instTrades = ctx.tradesByInst[inst];
 
     const aggBuy = new Map();
@@ -272,8 +296,7 @@ export function ruleP2(ctx, th, linkage, p1Alerts) {
       aggTotal += tr.qty;
     }
     if (aggTotal === 0) continue;
-    const cands = [...aggBuy.keys()].sort();
-    for (const cid of cands) {
+    for (const cid of [...aggBuy.keys()].sort()) {
       const rampQty = aggBuy.get(cid);
       const share = rampQty / aggTotal;
       const members = linkage.clusters.find((c) => c.id === cid)?.accounts ?? [cid.replace(/^CL-/, '')];
@@ -287,8 +310,9 @@ export function ruleP2(ctx, th, linkage, p1Alerts) {
       const netSell = sell - buy;
       const ratio = netSell / rampQty;
       if (ratio < th.p2NetSellRatio) continue;
-      // realised P&L in ticks x qty over [lookback, follow end), open inventory marked at the last print
-      let cash = 0, pos = 0, mark = null;
+      // P&L in ticks x qty over [lookback, follow end); open inventory marked at the last print.
+      // Accumulation: what the cluster built in the lookback before the P1 window.
+      let cash = 0, pos = 0, mark = null, accBuy = 0, accNet = 0;
       const sup = [], supOrders = new Set();
       for (const tr of instTrades) {
         if (tr.t < lookT0 || tr.t >= folT1) continue;
@@ -296,6 +320,10 @@ export function ruleP2(ctx, th, linkage, p1Alerts) {
         const bi = linkage.clusterOf[tr.buyAcct] === cid, si = linkage.clusterOf[tr.sellAcct] === cid;
         if (bi) { cash -= tr.price * tr.qty; pos += tr.qty; }
         if (si) { cash += tr.price * tr.qty; pos -= tr.qty; }
+        if (tr.t < rampT0) {
+          if (bi) { accBuy += tr.qty; accNet += tr.qty; }
+          if (si) accNet -= tr.qty;
+        }
         if ((bi || si) && !(bi && si)) {
           if ((bi && tr.aggressor === 'B' && tr.t >= rampT0 && tr.t < rampT1) || (si && tr.t >= folT0)) {
             sup.push(tr.id);
@@ -303,15 +331,16 @@ export function ruleP2(ctx, th, linkage, p1Alerts) {
           }
         }
       }
-      const accounts = members;
       alerts.push({
         id: `P2|${inst}|${cid}|${a.window.startMs}`, rule: 'P2', instrument: inst,
         window: { startMs: a.window.startMs, endMs: folT1 },
-        accounts, cluster: { id: cid, accounts: [...accounts] },
+        accounts: members, cluster: { id: cid, accounts: [...members] },
         metrics: {
           rampAggressiveBuyShare: share, rampAggressiveBuyQty: rampQty, followNetSellQty: netSell, followNetSellRatio: ratio,
+          accumulationNetQty: accNet, accumulationBuyShareOfVolume: lookVol === 0 ? 0 : accBuy / lookVol,
           pnlTicksQty: cash + pos * mark, cashTicksQty: cash, closingPosition: pos, markPrice: mark,
           p1AlertId: a.id, peakBin, rampEndBin: rampEnd, rampWindow: { startMs: rampT0, endMs: rampT1 }, followWindow: { startMs: folT0, endMs: folT1 },
+          lookbackWindow: { startMs: lookT0, endMs: rampT0 },
         },
         thresholdsCrossed: {
           p2RampShare: { value: share, threshold: th.p2RampShare },

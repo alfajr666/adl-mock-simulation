@@ -153,7 +153,7 @@ export function attachHover(host, cols) {
 }
 
 /* ------------------------------------------------------------------ case file: price and volume */
-export function priceVolume({ cv, result, tf, w }) {
+export function priceVolume({ cv, result, tf, w, baseline }) {
   const { market } = result;
   const def = cv.instrument;
   const tick = def.tickSize;
@@ -189,6 +189,11 @@ export function priceVolume({ cv, result, tf, w }) {
     s += `<rect x="${r1(x0)}" y="${priceTop - 6}" width="${r1(x1 - x0)}" height="${volBot - priceTop + 6}" fill="url(#${pat})" stroke="${COLORS.accent}" stroke-opacity=".6" stroke-dasharray="3 3"/>`;
     const lx = x0 + 4 + 90 > l + pw ? x1 - 4 : x0 + 4;
     s += `<text class="win-label" x="${r1(lx)}" y="${priceTop + 4}" text-anchor="${lx === x1 - 4 ? 'end' : 'start'}">alert window</text>`;
+  }
+  if (baseline && baseline.end >= baseline.start) {
+    const bx0 = l + (baseline.start * pw) / n, bx1 = l + ((baseline.end + 1) * pw) / n;
+    s += `<rect x="${r1(bx0)}" y="${priceTop - 6}" width="${r1(bx1 - bx0)}" height="${volBot - priceTop + 6}" fill="${COLORS.blue}" fill-opacity=".07" stroke="${COLORS.blue}" stroke-opacity=".5" stroke-dasharray="1 3"/>`;
+    s += `<text class="base-label" x="${r1(bx0 + 4)}" y="${priceBot - 6}">baseline</text>`;
   }
   // low-high range per bin and close line
   series.forEach((b, i) => { s += `<line class="range-line" x1="${r1(xOf(i))}" x2="${r1(xOf(i))}" y1="${r1(py(highs[i]))}" y2="${r1(py(lows[i]))}"/>`; });
@@ -235,7 +240,7 @@ export function clusterChart({ points, kind, tf, result, cv, w }) {
 }
 
 /* ------------------------------------------------------------------ case file: link graph */
-export function linkGraph({ accounts, edges, attrShort, w }) {
+export function linkGraph({ accounts, edges, attrShort, w, showLabels = true }) {
   const n = accounts.length;
   const h = n <= 1 ? 140 : Math.min(360, Math.max(260, w * 0.8));
   const cx = w / 2, cy = h / 2;
@@ -248,7 +253,7 @@ export function linkGraph({ accounts, edges, attrShort, w }) {
   order.forEach((a, i) => { const ang = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(n, 1); pos[a.acct] = { x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang) }; });
   const colorOf = (cid) => (size[cid] > 1 ? CLUSTER_COLORS[multi.indexOf(cid) % CLUSTER_COLORS.length] : COLORS.faint);
   const dashOf = (cid) => (size[cid] > 1 ? ['', '2 3', '6 3', '1 3'][multi.indexOf(cid) % 4] : '');
-  let s = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="Link graph of ${n} account${n === 1 ? '' : 's'} with ${edges.length} shared-attribute edge${edges.length === 1 ? '' : 's'}; the table below lists every edge">`;
+  let s = `<svg ${edges.length > 14 ? 'class="dense" ' : ''}viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="Link graph of ${n} account${n === 1 ? '' : 's'} with ${edges.length} shared-attribute edge${edges.length === 1 ? '' : 's'}; the table below lists every edge">`;
   const labels = [];
   edges.forEach((e, i) => {
     const a = pos[e.a], b = pos[e.b];
@@ -260,7 +265,7 @@ export function linkGraph({ accounts, edges, attrShort, w }) {
     const names = e.shared.map((x) => attrShort[x.key] || x.key).join(' + ');
     labels.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, text: `${names}${e.linked ? '' : ' (not counted)'}`, strong, linked: e.linked });
   });
-  for (const lb of labels) {
+  for (const lb of showLabels ? labels : []) {
     const tw = lb.text.length * 5.4 + 10;
     s += `<g class="edge-label ${lb.linked ? 'counted' : 'uncounted'}"><rect x="${r1(lb.x - tw / 2)}" y="${r1(lb.y - 8)}" width="${r1(tw)}" height="15" rx="4"/><text x="${r1(lb.x)}" y="${r1(lb.y + 3)}" text-anchor="middle">${esc(lb.text)}</text></g>`;
   }
@@ -275,7 +280,7 @@ export function linkGraph({ accounts, edges, attrShort, w }) {
 
 /* ------------------------------------------------------------------ trade-off explorer */
 export function lineChart({ points, series, currentX, xLabel, yLabel, categorical, w, valueFmt }) {
-  const h = 290, l = 38, rLab = w < 520 ? 86 : 110, t = 36, b = 50;
+  const h = 290, l = 38, rLab = w < 520 ? 84 : 110, t = 36, b = 50;
   const pw = w - l - rLab, ph = h - t - b;
   const n = points.length;
   const xs = points.map((p) => p.value);
@@ -314,34 +319,41 @@ export function lineChart({ points, series, currentX, xLabel, yLabel, categorica
   return { svg: s, cols };
 }
 
-/* ------------------------------------------------------------------ seed strip */
-export function seedStrip({ rows, currentSeed, w }) {
-  const n = rows.length;
-  const narrow = w < 560;
-  const h = narrow ? 230 : 250, l = 34, r = 6, t = 36, b = narrow ? 44 : 62;
-  const pw = w - l - r, ph = h - t - b;
-  const ymax = Math.max(4, ...rows.map((x) => x.overall.alerts));
-  const yt = intTicks(ymax);
-  const yTop = Math.max(...yt);
-  const y = (v) => t + ph - (v / yTop) * ph;
-  const slot = pw / n, bw = Math.min(34, slot * 0.58);
-  const pat = nid('hatch');
-  let s = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="Alerts per seed, split into true hits and false alarms, with missed episodes noted under each seed">`;
-  s += `<defs><pattern id="${pat}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="${COLORS.amber}" fill-opacity=".25"/><line x1="0" y1="0" x2="0" y2="6" stroke="${COLORS.amber}" stroke-width="2"/></pattern></defs>`;
-  for (const v of yt) s += `<line class="grid-line" x1="${l}" x2="${l + pw}" y1="${r1(y(v))}" y2="${r1(y(v))}"/><text class="ax-text" x="${l - 6}" y="${r1(y(v)) + 3}" text-anchor="end">${v}</text>`;
-  s += `<text class="ax-title" x="${l}" y="12">Alerts per run, by seed${narrow ? '' : ' (number above each bar = total alerts)'}</text>`;
-  rows.forEach((row, i) => {
-    const cx = l + slot * (i + 0.5), x0 = cx - bw / 2;
-    const tp = row.overall.tp, fp = row.overall.fp;
-    const cur = row.seed === currentSeed;
-    s += `<rect x="${r1(x0)}" y="${r1(y(tp))}" width="${bw}" height="${r1(y(0) - y(tp))}" fill="${COLORS.green}" rx="3"/>`;
-    s += `<rect x="${r1(x0)}" y="${r1(y(tp + fp))}" width="${bw}" height="${r1(Math.max(0, y(tp) - y(tp + fp) - 2))}" fill="url(#${pat})" stroke="${COLORS.amber}" stroke-width="1" rx="3"/>`;
-    s += `<text class="ax-text" x="${r1(cx)}" y="${r1(y(tp + fp)) - 5}" text-anchor="middle">${row.overall.alerts}</text>`;
-    s += `<text class="${cur ? 'seed-cur' : 'ax-text'}" x="${r1(cx)}" y="${t + ph + 15}" text-anchor="middle">${cur ? '▲' : ''}${narrow ? row.seed : `Seed ${row.seed}`}</text>`;
-    s += `<text class="ax-text" x="${r1(cx)}" y="${t + ph + 29}" text-anchor="middle">${row.overall.fn ? `✕${row.overall.fn}` : narrow ? '' : 'none missed'}</text>`;
-    if (!narrow) s += `<text class="ax-text" x="${r1(cx)}" y="${t + ph + 43}" text-anchor="middle">${row.overall.precision === null ? 'prec. –' : `prec. ${Math.round(row.overall.precision * 100)}%`}</text>`;
+/* ------------------------------------------------------------------ seed distribution strips */
+/** rows: [{label, values:[{seed,v}], domain:[lo,hi], ticks:[...], fmt}] -> dot strip per row with min, median, max. */
+export function distStrips({ rows, currentSeed, w }) {
+  const l = 14, r = 16, pw = w - l - r;
+  const rowH = 104;
+  const h = rows.length * rowH + 6;
+  let s = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="Distribution across seeds: one dot per seed, with the minimum, median and maximum marked; the table below lists every value">`;
+  rows.forEach((row, k) => {
+    const y0 = k * rowH + 8;
+    const [lo, hi] = row.domain;
+    const x = (v) => l + ((v - lo) / (hi - lo || 1)) * pw;
+    const axisY = y0 + 86;
+    const vals = row.values.map((d) => d.v).filter((v) => v !== null).sort((a, b) => a - b);
+    const mn = vals[0], mx = vals[vals.length - 1];
+    const med = vals.length % 2 ? vals[(vals.length - 1) / 2] : (vals[vals.length / 2 - 1] + vals[vals.length / 2]) / 2;
+    s += `<text class="ax-title" x="${l}" y="${y0 + 8}">${esc(row.label)}</text>`;
+    s += `<text class="seed-cur" x="${l}" y="${y0 + 24}">${vals.length ? `median ${esc(row.fmt(med))} · min ${esc(row.fmt(mn))} · max ${esc(row.fmt(mx))}` : 'no values'}</text>`;
+    s += `<line class="ax-line" x1="${l}" x2="${l + pw}" y1="${axisY}" y2="${axisY}"/>`;
+    for (const t of row.ticks) s += `<line class="ax-line" x1="${r1(x(t))}" x2="${r1(x(t))}" y1="${axisY}" y2="${axisY + 4}"/><text class="ax-text" x="${r1(x(t))}" y="${axisY + 15}" text-anchor="${t === hi ? 'end' : t === lo ? 'start' : 'middle'}">${esc(row.fmt(t))}</text>`;
+    if (vals.length) {
+      s += `<rect x="${r1(x(mn))}" y="${axisY - 4}" width="${r1(Math.max(2, x(mx) - x(mn)))}" height="5" rx="2.5" fill="${COLORS.faint}" fill-opacity=".55"/>`;
+      s += `<line x1="${r1(x(med))}" x2="${r1(x(med))}" y1="${y0 + 32}" y2="${axisY}" stroke="${COLORS.accent}" stroke-width="2" stroke-dasharray="4 2"/>`;
+    }
+    // dots: identical values stack five high, then spread sideways
+    const stack = new Map();
+    for (const d of row.values) {
+      if (d.v === null) continue;
+      const key = d.v;
+      const c = stack.get(key) || 0; stack.set(key, c + 1);
+      const rowIdx = c % 5, col = Math.floor(c / 5);
+      const dx = col === 0 ? 0 : (col % 2 ? 1 : -1) * Math.ceil(col / 2) * 8;
+      const cx = x(d.v) + dx, cy = axisY - 12 - rowIdx * 9;
+      if (d.seed === currentSeed) s += `<rect class="cur-dot" x="${r1(cx - 4)}" y="${r1(cy - 4)}" width="8" height="8" transform="rotate(45 ${r1(cx)} ${r1(cy)})"/>`;
+      else s += `<circle class="seed-dot" cx="${r1(cx)}" cy="${r1(cy)}" r="3.2"/>`;
+    }
   });
-  s += `<line class="ax-line" x1="${l}" x2="${l + pw}" y1="${t + ph}" y2="${t + ph}"/>`;
-  if (narrow) s += `<text class="ax-title" x="${l + pw / 2}" y="${h - 4}" text-anchor="middle">Seed (▲ current; ✕ = planted episodes missed)</text>`;
   return s + '</svg>';
 }
