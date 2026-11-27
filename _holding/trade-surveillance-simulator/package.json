@@ -1,0 +1,10 @@
+{
+  "name": "trade-surveillance-simulator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic, browser-runnable trade-surveillance simulator engine (synthetic data only).",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
