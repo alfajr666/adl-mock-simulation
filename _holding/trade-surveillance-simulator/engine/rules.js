@@ -153,11 +153,17 @@ export function ruleW2(ctx, th, linkage) {
       const sup = supTrades.map((tr) => tr.id);
       const supOrders = [...new Set(supTrades.flatMap((tr) => [tr.buyOrderId, tr.sellOrderId]))].sort((a, b) => a - b);
       const m = metricsAt[peak];
+      // per-member round trip: how much each member both bought and sold inside the cluster
+      const mem = new Map(cluster.accounts.map((a) => [a, { acct: a, internalBought: 0, internalSold: 0 }]));
+      for (const tr of supTrades) { mem.get(tr.buyAcct).internalBought += tr.qty; mem.get(tr.sellAcct).internalSold += tr.qty; }
+      const memberRoundTrip = [...mem.values()].map((x) => ({ ...x, roundTripQty: Math.min(x.internalBought, x.internalSold) }));
+      const sides = memberRoundTrip.reduce((acc, x) => acc + x.internalBought + x.internalSold, 0);
+      const internalRoundTripShare = sides === 0 ? 0 : memberRoundTrip.reduce((acc, x) => acc + 2 * x.roundTripQty, 0) / sides;
       alerts.push({
         id: `W2|${inst}|${cid}|${t0}`, rule: 'W2', instrument: inst,
         window: { startMs: t0, endMs: t1 },
         accounts: [...cluster.accounts], cluster: { id: cid, accounts: [...cluster.accounts] },
-        metrics: { ...m, windowBins: w, peakWindowStartMs: market.bins[peak].t0 },
+        metrics: { ...m, memberRoundTrip, internalRoundTripShare, windowBins: w, peakWindowStartMs: market.bins[peak].t0 },
         thresholdsCrossed: {
           w2ClusterShare: { value: m.clusterInternalShare, threshold: th.w2ClusterShare },
           w2NetRatio: { value: m.netChangeOverInternal, threshold: th.w2NetRatio },
@@ -203,7 +209,7 @@ export function ruleP1(ctx, th) {
   const baseFor = (i) => {
     if (warm) return { st: warm, lo: 0, hi: N - 1 };
     const lo = Math.max(0, i - N), hi = i - 1;
-    if (hi - lo + 1 < Math.min(4, N)) return null;           // not enough trailing history yet
+    if (hi - lo + 1 < Math.min(th.p1MinTrailingBins, N)) return null;           // not enough trailing history yet
     const key = `${lo}:${hi}`;
     if (!trailingCache.has(key)) trailingCache.set(key, baselineStats(ctx, lo, hi));
     return { st: trailingCache.get(key), lo, hi };
@@ -321,7 +327,8 @@ export function ruleP2(ctx, th, linkage, p1Alerts) {
         if (bi) { cash -= tr.price * tr.qty; pos += tr.qty; }
         if (si) { cash += tr.price * tr.qty; pos -= tr.qty; }
         if (tr.t < rampT0) {
-          if (bi) { accBuy += tr.qty; accNet += tr.qty; }
+          if (bi && !si) accBuy += tr.qty;                         // trades inside the cluster are not accumulation
+          if (bi) accNet += tr.qty;
           if (si) accNet -= tr.qty;
         }
         if ((bi || si) && !(bi && si)) {

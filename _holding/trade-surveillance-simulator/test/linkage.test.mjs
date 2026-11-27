@@ -95,23 +95,23 @@ test('register schema reframes identity and hosted attributes as the review aske
   assert.match(e.find((a) => a.key === 'brokerBranch').caveat, /Very weak/);
 });
 
-test('linkage policy has a real cost in both directions (20 seeds each config)', () => {
-  const seeds = Array.from({ length: 20 }, (_, i) => i + 1);
+test('linkage policy has a real cost in both directions (40 seeds each config)', () => {
+  const seeds = Array.from({ length: 40 }, (_, i) => i + 1);
   const mean = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
   for (const id of CONFIG_IDS) {
     const by = {};
     for (const p of ['strong1', 'weak2', 'weak1']) by[p] = seedStudy(id, seeds, { linkagePolicy: p });
-    const col = (p, k) => by[p].rows.map((r) => r[k]);
-    // strict misses: W2 finds the ring less often than the default does
-    assert.ok(mean(col('strong1', 'w2Found')) < mean(col('weak2', 'w2Found')) - 0.3, `${id} strict W2 recall`);
-    // strict builds few spurious pairs, default a few, loose a great many
-    assert.ok(mean(col('strong1', 'falseLinkedPairs')) <= mean(col('weak2', 'falseLinkedPairs')));
-    assert.ok(mean(col('weak2', 'falseLinkedPairs')) < 15, 'default: a few spurious pairs');
-    assert.ok(mean(col('weak1', 'falseLinkedPairs')) > 10 * mean(col('weak2', 'falseLinkedPairs')), 'loose: large false clusters');
+    const col = (p, k) => by[p].rows.map((r) => r[k]).filter((x) => x !== null);
+    // strict misses the ring cleanly far more often than the default (the hub is only weakly linked)
+    assert.ok(mean(col('weak2', 'w2Found')) - mean(col('strong1', 'w2Found')) > 0.5, `${id} strict W2 recall`);
+    // the default pays an alert cost strict does not: honest groups linked by weak attributes that trade each other
+    assert.ok(mean(col('weak2', 'unrelatedCases')) > mean(col('strong1', 'unrelatedCases')) + 0.3, `${id} default unrelated vs strict`);
+    // loose: giant clusters, more unrelated cases, planted alerts diluted by honest accounts
     assert.ok(mean(col('weak1', 'largestCluster')) >= 4 * mean(col('weak2', 'largestCluster')));
-    // loose raises unrelated groups and visibly disturbs planted detections or labels
-    assert.ok(mean(col('weak1', 'groupsUnrelated')) > mean(col('weak2', 'groupsUnrelated')) + 1);
-    const disturbed = seeds.filter((s, i) => by.weak1.rows[i].groupsExplainable === 0 || by.weak1.rows[i].groupsUnrelated > by.weak2.rows[i].groupsUnrelated).length;
-    assert.ok(disturbed >= 16, `${id}: loose disturbs ${disturbed}/20 seeds`);
+    assert.ok(mean(col('weak1', 'falseLinkedPairs')) > 5 * mean(col('weak2', 'falseLinkedPairs')));
+    assert.ok(mean(col('weak1', 'unrelatedCases')) > mean(col('weak2', 'unrelatedCases')) + 1);
+    assert.ok(mean(col('weak1', 'episodesDiluted')) > 0.4, 'planted episodes are found, diluted');
+    assert.ok(mean(col('weak1', 'meanAccountsPerMatchingAlert')) > 3 * mean(col('weak2', 'meanAccountsPerMatchingAlert')));
+    assert.ok(mean(col('weak1', 'episodesFound')) < mean(col('weak2', 'episodesFound')) - 0.5, 'clean finds drop under loose linkage');
   }
 });

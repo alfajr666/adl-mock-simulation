@@ -65,16 +65,25 @@ export function simulate(scn, seed) {
   const retail = scn.retail.accts.map((acct) => ({
     acct, rng: R(`retail:${acct}`), momentum: scn.retail.momentum.includes(acct), live: [], hold: {}, cool: {}, sens: 2 + 2 * R(`sens:${acct}`).u(),
   }));
+  // planted accounts also trade other names at a modest rate (cover activity), never their own target
+  for (const acct of (scn.cover ? scn.cover.accts : [])) {
+    retail.push({ acct, rng: R(`cover:${acct}`), momentum: false, live: [], hold: {}, cool: {}, sens: 1, cover: scn.cover.exclude[acct], scale: scn.cover.scale });
+  }
   const mms = scn.mm.map((g) => ({ ...g, rng: R(`mm:${g.id}`), live: [] }));
   const ring = scn.ring ? { ...scn.ring, rng: R('ring'), cursor: 0 } : null;
   const pump = scn.pump ? { ...scn.pump, rng: R('pump'), live: [], rampP0: null } : null;
   const transfers = scn.transfers.map((x) => ({ ...x }));
   const log = { transfers: [] };
 
-  function pickInstrument(rng) {
-    let x = rng.u() * wsum;
-    for (const id of instIds) { x -= defs[id].retailWeight; if (x <= 0) return id; }
-    return instIds[instIds.length - 1];
+  function pickInstrument(rng, exclude = null) {
+    const total = exclude ? wsum - defs[exclude].retailWeight : wsum;
+    let x = rng.u() * total;
+    let last = instIds[instIds.length - 1];
+    for (const id of instIds) {
+      if (id === exclude) continue;
+      last = id; x -= defs[id].retailWeight; if (x <= 0) return id;
+    }
+    return last;
   }
 
   function retailAct(a) {
@@ -87,9 +96,12 @@ export function simulate(scn, seed) {
     const rng = a.rng;
     let inst = null, mode = null;
     let held = [];
-    const hype = scn.hype.find((h) => ctx.step >= h.from && ctx.step < h.to);
-    if (hype && rng.chance(hype.p)) {
+    let hype = null;
+    if (!a.cover) for (const h of scn.hype) if (ctx.step >= h.from && ctx.step < h.to && rng.chance(h.p)) { hype = h; break; }
+    if (hype) {
       inst = hype.inst; mode = 'hype';
+    } else if (a.cover) {
+      if (rng.chance(rs.actProb * a.scale)) { inst = pickInstrument(rng, a.cover); mode = 'normal'; }
     } else if (a.momentum) {
       // a sharp rise recruits this follower for `followHold` steps (late-arriving retail buying)
       for (const id of instIds) {
@@ -100,8 +112,8 @@ export function simulate(scn, seed) {
       }
       held = instIds.filter((id) => a.hold[id] > ctx.step);
     }
-    if (mode === 'hype') {
-      /* crowd reacting to the promoted name */
+    if (mode === 'hype' || a.cover) {
+      /* crowd reacting to the promoted name, or cover activity: mode already decided */
     } else if (held.length && rng.chance(rs.followProb)) {
       inst = held[rng.int(0, held.length - 1)]; mode = 'follow';
     } else if (ctx.hot.length && rng.chance(rs.newsActProb)) {
@@ -240,7 +252,7 @@ export function simulate(scn, seed) {
     }
   }
 
-  function pumpAct() {
+  function pumpAct(phase) {
     const c = pump;
     const d = defs[c.inst];
     const rng = c.rng;
@@ -249,6 +261,7 @@ export function simulate(scn, seed) {
     const inRamp = s >= c.ramp.from && s < c.ramp.to;
     const inDist = s >= c.distribute.from && s < c.distribute.to;
     if (!inAcc && !inRamp && !inDist) return;
+    if ((phase === 'post') !== inRamp) return;               // the ramp trades after the retail crowd; the other phases before
     for (const id of c.live) ex.cancel(id, 'REPLACED');
     c.live = [];
     const keep = (r) => { if (r.status === 'resting' || r.status === 'partial') c.live.push(r.id); };
@@ -315,10 +328,12 @@ export function simulate(scn, seed) {
     for (const g of mms) mmQuote(g);
     runTransfers();
     if (ring) ringAct();
-    if (pump) pumpAct();
+    if (pump) pumpAct('pre');
     algoAct();
+    for (const b of scn.blocks) if (b.step === s) ex.submit({ acct: b.acct, inst: b.inst, side: b.side, type: 'M', qty: b.lots * defs[b.inst].lotSize });
     const order = worldRng.shuffle(retail.map((_, i) => i));
     for (const i of order) retailAct(retail[i]);
+    if (pump) pumpAct('post');
 
     for (const id of instIds) {
       world[id].closes.push(ex.last(id));

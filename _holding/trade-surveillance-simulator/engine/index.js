@@ -11,7 +11,7 @@ import { buildGroundTruth, scoreAlerts, RULES, RULE_TARGETS, PATTERN_RULES } fro
 import { buildEquity } from './scenario-equity.js';
 import { buildCrypto } from './scenario-crypto.js';
 
-export const MODEL_VERSION = 'surv-model-1.1.0';
+export const MODEL_VERSION = 'surv-model-1.2.0';
 export { LINKAGE_POLICIES, RULES, RULE_TARGETS, PATTERN_RULES };
 
 const BUILDERS = { equity: buildEquity, crypto: buildCrypto };
@@ -25,13 +25,13 @@ export const DEFAULTS = {
     equity: {
       w1MinCount: 1, w1MinLots: 1, w1MergeBins: 60,
       w2WindowBins: 4, w2MergeGapBins: 8, w2ClusterShare: 0.5, w2NetRatio: 0.6, w2InstrumentShare: 0.25, w2MinInternalLots: 10,
-      p1Mode: 'instrument', p1Baseline: 'warmup', p1WindowBins: 10, p1MergeGapBins: 4, p1BaselineBins: 10, p1MoveScore: 5, p1VolMult: 2, p1MinReturnBps: 300,
+      p1Mode: 'instrument', p1Baseline: 'warmup', p1WindowBins: 10, p1MergeGapBins: 4, p1BaselineBins: 10, p1MinTrailingBins: 4, p1MoveScore: 5, p1VolMult: 2, p1MinReturnBps: 300,
       p2MinClusterSize: 2, p2RampShare: 0.25, p2RampEndFraction: 0.6, p2FollowBins: 20, p2NetSellRatio: 0.3, p2MinRampLots: 5, p2LookbackBins: 30,
     },
     crypto: {
       w1MinCount: 1, w1MinLots: 1, w1MergeBins: 90,
       w2WindowBins: 5, w2MergeGapBins: 6, w2ClusterShare: 0.5, w2NetRatio: 0.6, w2InstrumentShare: 0.25, w2MinInternalLots: 10,
-      p1Mode: 'instrument', p1Baseline: 'warmup', p1WindowBins: 5, p1MergeGapBins: 6, p1BaselineBins: 20, p1MoveScore: 5, p1VolMult: 2, p1MinReturnBps: 300,
+      p1Mode: 'instrument', p1Baseline: 'warmup', p1WindowBins: 5, p1MergeGapBins: 6, p1BaselineBins: 20, p1MinTrailingBins: 4, p1MoveScore: 5, p1VolMult: 2, p1MinReturnBps: 300,
       p2MinClusterSize: 2, p2RampShare: 0.25, p2RampEndFraction: 0.6, p2FollowBins: 10, p2NetSellRatio: 0.3, p2MinRampLots: 5, p2LookbackBins: 40,
     },
   },
@@ -87,7 +87,12 @@ function getSim(configId, seed, fresh) {
 }
 
 function resolveThresholds(configId, over) {
-  return { ...DEFAULTS.thresholds[configId], ...(over || {}) };
+  const base = DEFAULTS.thresholds[configId];
+  for (const k of Object.keys(over || {})) if (!(k in base)) throw new Error(`Unknown threshold: ${k}`);
+  const th = { ...base, ...(over || {}) };
+  if (!['instrument', 'global'].includes(th.p1Mode)) throw new Error(`Bad p1Mode: ${th.p1Mode}`);
+  if (!['warmup', 'trailing'].includes(th.p1Baseline)) throw new Error(`Bad p1Baseline: ${th.p1Baseline}`);
+  return th;
 }
 
 /**
@@ -177,7 +182,7 @@ function linkageSummary(r) {
   const ring = gt.episodes.find((e) => e.type === 'wash').accounts;
   const ringClusters = new Set(ring.map((a) => r.linkage.clusterOf[a]));
   const pairDecoys = gt.decoys.filter((d) => ['coincidental-shared-attribute', 'unrelated-shared-strong-attribute', 'unrelated-shared-weak-attributes'].includes(d.type));
-  const pair = pairDecoys[0].accounts;
+  const pair = gt.decoys.find((d) => d.id === 'DEC-LINK-1').accounts;
   const honest = (a) => !(roles[a] || '').startsWith('planted-') && roles[a] !== 'market-maker';
   let falseLinkedPairs = 0;
   for (const c of r.linkage.clusters) {
@@ -192,15 +197,20 @@ function linkageSummary(r) {
     falseLinkFormed: r.linkage.clusterOf[pair[0]] === r.linkage.clusterOf[pair[1]],       // the single-weak-attribute honest pair
     designedPairsLinked: pairDecoys.filter((d) => r.linkage.clusterOf[d.accounts[0]] === r.linkage.clusterOf[d.accounts[1]]).length,
     falseLinkedPairs,
+    meanAccountsPerMatchingAlert: (() => {
+      const m = r.alerts.filter((a) => ['MATCH', 'MATCH_DILUTED'].includes(r.score.labels[a.id].label) && a.accounts.length);
+      return m.length ? m.reduce((s, a) => s + a.accounts.length, 0) / m.length : null;
+    })(),
     falseLinkAlerts: r.alerts.filter((a) => a.accounts.some((x) => pair.includes(x)) && r.score.labels[a.id].label === 'UNRELATED').length,
   };
 }
 
-/** Flat, chart-ready row for one run: group-level counts first, raw alert counts alongside. */
+/** Flat, chart-ready row for one run: case-level summary first, rule-level groups and raw alert counts alongside. */
 function row(r) {
   const o = r.score.overall;
   return {
-    episodesFound: o.episodes.found, episodesMissed: o.episodes.missed,
+    caseSummary: r.score.caseSummary,
+    episodesFound: o.episodes.found, episodesDiluted: o.episodes.diluted, episodesMissed: o.episodes.missed,
     decoysAlerted: r.score.decoysAlerted.length,
     groups: o.groups, alerts: o.alerts,
     precision: o.precision, recall: o.recall,
@@ -235,25 +245,30 @@ export function linkageComparison(configId, opts = {}) {
   return sweep(configId, 'linkagePolicy', Object.keys(LINKAGE_POLICIES), opts);
 }
 
-/** Do the designed detection targets hold in this run? (used by seedStudy and the tests) */
+/**
+ * Detection target: both planted episodes found cleanly by the pattern rules (not diluted).
+ * The designed traps are reported, not required: `traps` says whether each fired in this run.
+ */
 export function detectionTargets(r) {
   const gt = r.groundTruth;
   const shockInst = Object.entries(gt.instrumentRoles).find(([, v]) => v === 'benign-shock')[0];
-  const t = {
-    bothEpisodesFound: r.score.overall.episodes.missed === 0,
-    explainablePresent: r.score.overall.alerts.explainable >= 1,
-    shockAlertsOnP1: r.alerts.some((a) => a.rule === 'P1' && a.instrument === shockInst),
-    shockQuietOnP2: !r.alerts.some((a) => a.rule === 'P2' && a.instrument === shockInst),
+  const bothEpisodesFound = r.score.overall.episodes.found === gt.episodes.length;
+  return {
+    bothEpisodesFound, all: bothEpisodesFound,
+    traps: {
+      explainableAlert: r.score.overall.alerts.explainable >= 1,
+      shockAlertsOnP1: r.alerts.some((a) => a.rule === 'P1' && a.instrument === shockInst),
+      shockAlertsOnP2: r.alerts.some((a) => a.rule === 'P2' && a.instrument === shockInst),
+    },
   };
-  t.all = Object.values(t).every(Boolean);
-  return t;
 }
 
 const med = (xs) => { const a = xs.filter((x) => x !== null && x !== undefined).sort((p, q) => p - q); const n = a.length; return n === 0 ? null : n % 2 ? a[(n - 1) >> 1] : (a[n / 2 - 1] + a[n / 2]) / 2; };
 
 /**
- * Run many seeds. Returns per-seed rows and a summary (median / min / max) of group-level metrics.
- * @returns {{configId, seeds, opts, rows:Array, summary:Object, targetsPassing:number, failures:Array}}
+ * Run many seeds. Returns per-seed rows and a summary (median / min / max) of case-level and group-level metrics, trap firing rates and
+ * the count of seeds where both planted episodes were found cleanly.
+ * @returns {{configId, seeds, opts, rows:Array, summary:Object, trapRates:Object, targetsPassing:number, failures:Array}}
  */
 export function seedStudy(configId, seeds, opts = {}) {
   const rows = [];
@@ -262,9 +277,13 @@ export function seedStudy(configId, seeds, opts = {}) {
     const o = r.score.overall;
     const t = detectionTargets(r);
     const lk = linkageSummary(r);
+    const cs = r.score.caseSummary;
     rows.push({
       seed,
-      episodesFound: o.episodes.found,
+      episodesFound: o.episodes.found, episodesDiluted: o.episodes.diluted, episodesMissed: o.episodes.missed,
+      cases: cs.cases, episodeCases: cs.episodeCases, dilutedEpisodeCases: cs.dilutedEpisodeCases, trapCases: cs.trapCases, unrelatedCases: cs.unrelatedCases,
+      shareMatchingEpisode: cs.shareMatchingEpisode, shareMatchingOrExplainable: cs.shareMatchingOrExplainable,
+      meanAccountsPerMatchingAlert: lk.meanAccountsPerMatchingAlert,
       groups: o.groups.total, groupsMatch: o.groups.episodeMatches, groupsExplainable: o.groups.explainable, groupsUnrelated: o.groups.unrelated,
       alerts: o.alerts.total, alertsMatch: o.alerts.match, alertsExplainable: o.alerts.explainable, alertsUnrelated: o.alerts.unrelated,
       precisionGroupMatch: o.precision.group.match, precisionGroupMatchOrExplainable: o.precision.group.matchOrExplainable,
@@ -282,8 +301,14 @@ export function seedStudy(configId, seeds, opts = {}) {
     const v = rows.map((x) => x[c]).filter((x) => x !== null);
     summary[c] = { median: med(v), min: v.length ? Math.min(...v) : null, max: v.length ? Math.max(...v) : null };
   }
-  const failures = rows.filter((x) => !x.targets.all).map((x) => ({ seed: x.seed, failed: Object.entries(x.targets).filter(([k, v]) => k !== 'all' && !v).map(([k]) => k) }));
-  return { configId, seeds, opts, rows, summary, targetsPassing: rows.length - failures.length, failures };
+  const failures = rows.filter((x) => !x.targets.all).map((x) => ({ seed: x.seed, failed: ['bothEpisodesFound'], episodesFound: x.episodesFound, episodesDiluted: x.episodesDiluted }));
+  const rate = (f) => rows.filter(f).length / rows.length;
+  const trapRates = {
+    explainableAlert: rate((x) => x.targets.traps.explainableAlert),
+    shockAlertsOnP1: rate((x) => x.targets.traps.shockAlertsOnP1),
+    shockAlertsOnP2: rate((x) => x.targets.traps.shockAlertsOnP2),
+  };
+  return { configId, seeds, opts, rows, summary, trapRates, targetsPassing: rows.length - failures.length, failures };
 }
 
 export { caseView } from './caseview.js';

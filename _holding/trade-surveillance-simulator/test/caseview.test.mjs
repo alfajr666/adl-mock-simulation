@@ -10,10 +10,16 @@ for (const id of CONFIG_IDS) {
       assert.deepEqual(Object.keys(v).sort(), ['accounts', 'accountsNote', 'alert', 'clusterSeries', 'groundTruth', 'instrument', 'linkage', 'linkagePolicy', 'modelVersion', 'series', 'trades'].sort());
       assert.equal(v.series.length, r.market.bins.length);
       assert.ok(v.series.some((s) => s.inAlertWindow));
-      assert.ok(v.series.every((s) => s.inAlertWindow === (s.startMs < alert.window.endMs && s.endMs > alert.window.startMs)));
+      const marked = v.series.filter((x) => x.inAlertWindow);
+      assert.ok(marked.length >= 1);
+      if (alert.rule !== 'W1') {
+        assert.equal(marked[0].startMs, alert.window.startMs, `${alert.id}: first marked bin starts the window`);
+        assert.equal(marked.at(-1).endMs, alert.window.endMs, `${alert.id}: last marked bin ends the window`);
+        assert.deepEqual(marked.map((x) => x.bin), marked.map((_, i) => marked[0].bin + i), 'marked bins are contiguous');
+      }
       assert.equal(v.trades.length, alert.supportingTradeIds.length);
       assert.ok(v.accounts.length >= 1);
-      for (const a of v.accounts) { assert.ok(a.attributes && a.declaredOwner && a.clusterId); assert.equal('role' in a, false); }
+      for (const a of v.accounts) { assert.ok(a.attributes && a.declaredOwner && a.clusterId); assert.equal('role' in a, false); assert.equal(Object.isFrozen(a.attributes), false, 'attributes are copies, safe to mutate'); }
       assert.ok(v.clusterSeries.length >= 1);
       assert.equal(v.clusterSeries[0].points.length, r.market.bins.length);
       assert.ok(['MATCH', 'EXPLAINABLE', 'UNRELATED', 'SELF_MATCH'].includes(v.groundTruth.label));

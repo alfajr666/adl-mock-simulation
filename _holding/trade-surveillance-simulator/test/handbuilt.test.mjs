@@ -178,3 +178,44 @@ test('the detection context holds the market, trades and derived bars only: no s
   assert.ok(!seen.some((k) => forbidden.test(k)), seen.filter((k) => forbidden.test(k)).join(','));
   assert.deepEqual(Object.keys(ctx.market).sort(), ['bins', 'binIndexOf', 'binMs', 'instrumentById', 'instruments', 'label', 'session'].sort());
 });
+
+test('W2 round trip: a two-way internal exchange scores a high round-trip share, a one-way transfer scores zero (while netChangeOverInternal is 0 for both)', () => {
+  nextId = 1;
+  const both = [trade(10, 1000, 60, 'A', 'B'), trade(10, 1000, 40, 'B', 'A'), trade(10, 1000, 100, 'C', 'D')];
+  const a = byRule(run(both).alerts, 'W2')[0];
+  assert.equal(a.metrics.netChangeOverInternal, 0);
+  assert.deepEqual(a.metrics.memberRoundTrip, [
+    { acct: 'A', internalBought: 60, internalSold: 40, roundTripQty: 40 },
+    { acct: 'B', internalBought: 40, internalSold: 60, roundTripQty: 40 },
+  ]);
+  assert.equal(a.metrics.internalRoundTripShare, 0.8);
+  nextId = 1;
+  const oneWay = [trade(10, 1000, 100, 'A', 'B'), trade(10, 1000, 100, 'C', 'D')];
+  const b = byRule(run(oneWay).alerts, 'W2')[0];
+  assert.equal(b.metrics.netChangeOverInternal, 0);
+  assert.equal(b.metrics.internalRoundTripShare, 0);
+  assert.deepEqual(b.metrics.memberRoundTrip.map((m) => m.roundTripQty), [0, 0]);
+});
+
+test('P2 accumulation share excludes trades inside the cluster', () => {
+  const ex = [];
+  for (const b of [6, 7, 8]) ex.push(trade(b, 1000, 20, 'G1', 'R2', 'S'));
+  ex.push(trade(7, 1000, 40, 'G1', 'G2'));                                                        // internal: not accumulation
+  [[10, 1050], [11, 1100], [12, 1100]].forEach(([b, p]) => { ex.push(trade(b, p, 100, 'G1', 'R2'), trade(b, p, 100, 'G2', 'R2'), trade(b, p, 50, 'R3', 'R2')); });
+  [[13, 1100], [14, 1090], [15, 1080]].forEach(([b, p]) => { ex.push(trade(b, p, 100, 'R3', 'G1', 'B'), trade(b, p, 100, 'R3', 'G2', 'B')); });
+  const trades = baselineTape(ex);
+  const a = byRule(run(trades).alerts, 'P2')[0];
+  const w = a.metrics.lookbackWindow;
+  const lookVol = trades.filter((x) => x.t >= w.startMs && x.t < w.endMs).reduce((s, x) => s + x.qty, 0);
+  assert.equal(a.metrics.accumulationBuyShareOfVolume, 60 / lookVol);
+  assert.equal(a.metrics.accumulationNetQty, 60 + 40 - 40, 'internal buy and sell cancel in the net');
+});
+
+test('trailing baseline needs p1MinTrailingBins of history before it will flag a window', () => {
+  const move = [5, 6, 7].map((b) => trade(b, 1200, 600, 'R1', 'R2'));
+  const tape = baselineTape(move);
+  const early = (th) => byRule(run(tape, { p1Baseline: 'trailing', p1MinTrailingBins: th }).alerts, 'P1').filter((a) => a.metrics.startBin < 8);
+  assert.ok(early(4).length >= 1, 'five bins of history are enough for a minimum of four');
+  assert.equal(early(8).length, 0, 'five bins of history are not enough for a minimum of eight');
+  assert.equal(DEFAULTS.thresholds.equity.p1MinTrailingBins, 4);
+});

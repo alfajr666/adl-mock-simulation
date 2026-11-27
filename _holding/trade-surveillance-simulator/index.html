@@ -52,13 +52,18 @@
       </div>
     </section>
 
+    <section aria-labelledby="num-h" class="section-gap">
+      <h2 id="num-h">What the numbers mean</h2>
+      <p class="muted" style="max-width:80ch;margin-top:10px">The scorecard counts cases, not alerts: one per planted episode found, one per designed trap that alerted, one per cluster of unrelated alerts. Both planted episodes are found cleanly at default settings in every seed from 1 to 100, by design, so the informative figures are how many other cases surround them (the share of cases that match a planted episode has a median of about 0.29) and how that moves with linkage, baseline and thresholds. They show how rules react to designed situations, not real-world detection performance, and several parts of the scenario, such as the scripted crowds and the clean baseline period, stay contrived.</p>
+    </section>
+
     <section aria-labelledby="how-h" class="section-gap">
       <h2 id="how-h">How a session goes</h2>
       <ol class="walk" style="margin-top:12px;max-width:80ch">
         <li>Scan the market tape and open an alert from the queue.</li>
         <li>Read its case file: price and volume, account register, link graph, supporting trades, group position and profit and loss.</li>
         <li>Record a decision: close, keep monitoring, or escalate.</li>
-        <li>Reveal what was planted for that alert, or show the whole answer key for the group-level scorecard and the trade-off explorer.</li>
+        <li>Reveal what was planted for that alert, or show the whole answer key for the case-level scorecard and the trade-off explorer.</li>
       </ol>
     </section>
 

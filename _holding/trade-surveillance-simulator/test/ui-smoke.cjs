@@ -72,6 +72,14 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   const vis = await page.evaluate(() => ['#tape', '#queue-section', '#case-section', '#controls'].map((s) => document.querySelector(s).outerHTML).join('\n'));
   const leak = vis.match(LEAK);
   check(!leak, `${tag}: no label, role, cause or id-of-truth in the tape, queue, case or controls DOM before reveal${leak ? ' -> ' + leak[0] : ''}`);
+  const attrs = await page.evaluate(() => { const out = []; for (const el of document.querySelectorAll('body *')) { if (el.closest('#method, #score-section, #explore-section')) continue; for (const a of el.attributes) out.push(`${a.name}=${a.value}`); } return out.join('\n'); });
+  const aleak = attrs.match(LEAK);
+  check(!aleak, `${tag}: no label, role or cause in any attribute (class, data-*, title, aria-label, id) outside the methodology and locked panels${aleak ? ' -> ' + aleak[0] : ''}`);
+  await page.locator('#pv-host svg').scrollIntoViewIfNeeded();
+  const box = await page.locator('#pv-host svg').boundingBox();
+  await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.4);
+  const tip = await page.locator('#pv-host .tip').innerText().catch(() => '');
+  check(tip.length > 0 && !LEAK.test(tip), `${tag}: chart tooltip shows bin data only (${tip.replace(/\n/g, ' / ').slice(0, 60)})`);
   const skeletons = await page.evaluate(() => [...document.querySelectorAll('#queue-body tr[data-id]')].map((r) => ({ id: r.dataset.id, sk: r.outerHTML.replace(/>[^<]*</g, '><').replace(/ data-id="[^"]*"/, '').replace(/ tabindex="-?\d"/, '').replace(/ aria-current="[^"]*"/, '').replace(/ title="[^"]*"/g, '') })));
   const byRule = {};
   for (const r of skeletons) { const rule = r.id.split('|')[0]; (byRule[rule] ||= new Set()).add(r.sk); }
@@ -106,6 +114,10 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   await page.waitForSelector('#pv-host svg');
   check(/net buying was/.test(await page.locator('#case-section').innerText()), `${tag}: P2 case shows the accumulation metrics`);
 
+  // keyboard-accessible data views for the charts
+  await page.locator('#case-section details summary', { hasText: 'chart data' }).first().click();
+  check(await page.locator('#pv-data tbody tr').count() === def.market.bins.length && await page.locator('#pv-data [role="region"][tabindex="0"]').count() === 1, `${tag}: price chart has a focusable data table with a row per bin`);
+
   // selecting an alert renders the case file
   await page.locator('#queue-body tr[data-id]').nth(3).click();
   await page.waitForSelector('#pv-host svg');
@@ -116,6 +128,7 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   check(await page.locator('#panel-trades table tbody tr').count() > 0, `${tag}: supporting trades tab has rows`);
   await page.click('#tab-cluster');
   check(await page.locator('#pos-host svg').count() === 1 && await page.locator('#pnl-host svg').count() === 1, `${tag}: position and P&L charts render`);
+  check(await page.locator('#panel-cluster details table tbody tr').count() > 20 || await page.locator('#panel-cluster details').count() === 0, `${tag}: position and P&L chart has a data table`);
   await page.click('#tab-accounts');
 
   // linkage policy changes the queue
@@ -143,6 +156,20 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   check(await overflow(page) <= 0, `${tag}: no page overflow with a large group open (${await overflow(page)}px)`);
   await page.locator('#case-section').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(SHOTS, `${cfg}-${vpName}-loose.png`), fullPage: true });
+  // a diluted alert: reveal text states N of M named accounts, and the decision check says the case file needs narrowing
+  const dil = loose.alerts.find((a) => loose.score.labels[a.id].label === 'MATCH_DILUTED');
+  check(!!dil, `${tag}: (precondition) loose linkage yields a diluted match in the engine`);
+  if (dil) {
+    await page.locator(`#queue-body tr[data-id="${dil.id}"]`).click();
+    await page.waitForSelector('#reveal-btn');
+    await page.locator('input[name="decision"][value="escalate"]').check();
+    await page.click('#reveal-btn');
+    await page.waitForSelector('#verdict-h');
+    const vt = await page.locator('#answer-box').innerText();
+    const prec = loose.score.labels[dil.id].accountPrecision, m = dil.accounts.length, k = Math.round(prec * m);
+    check(vt.includes(`Overlaps a planted episode, diluted (${k} of ${m} named accounts are planted)`) && /needs narrowing/.test(vt), `${tag}: diluted reveal says ${k} of ${m} named accounts are planted and that the case file needs narrowing`);
+    check(/Diluted/.test(await page.locator(`#queue-body tr[data-id="${dil.id}"]`).innerText()) === false, `${tag}: (before unlock) the queue row does not say diluted`);
+  }
   await page.locator('input[name="policy"][value="weak2"]').check();
   await waitCount(page, 'eq', N);
   check(await queueCount(page) === N, `${tag}: back to default linkage restores the count`);
@@ -181,7 +208,7 @@ async function runPage(browser, base, ENG, cfg, vpName) {
     if (rev) await page.keyboard.press('Enter');
     await page.waitForSelector('#verdict-h');
     const verdict = await page.locator('#answer-box').innerText();
-    check(/Matches a planted episode|Explainable|Unrelated to anything planted|Self-match hygiene/.test(verdict) && /fits|does not fit|not recorded|monitoring/.test(verdict) && /simplification/.test(verdict), `${tag}: reveal shows one of the three labels (or hygiene), the decision comparison and the simplification note`);
+    check(/Matches a planted episode|Overlaps a planted episode, diluted|Explainable|Unrelated to anything planted|Self-match hygiene/.test(verdict) && /fits|does not fit|not recorded|monitoring/.test(verdict) && /simplification/.test(verdict), `${tag}: reveal shows one of the three labels (or hygiene), the decision comparison and the simplification note`);
     check(!OLD_WORDS.test(verdict), `${tag}: reveal text avoids retired wording`);
   }
 
@@ -189,39 +216,58 @@ async function runPage(browser, base, ENG, cfg, vpName) {
   await page.click('#key-toggle');
   await page.waitForSelector('#score-section .metrics');
   const sc = await page.locator('#score-section').innerText();
-  check(/Alert groups/i.test(sc) && /Match a planted episode/i.test(sc) && /Explainable/i.test(sc) && /Unrelated/i.test(sc) && /Episodes found/i.test(sc) && /share of alert groups that match a planted episode/i.test(sc) && /match or are explainable/i.test(sc), `${tag}: scorecard is group-level with both precision definitions`);
-  check(await page.locator('#score-section table tbody tr').count() === 4 && !/\bW1\b/.test(await page.locator('#score-section table').first().innerText()), `${tag}: rule table covers W2, P1, P2 (plus overall) and not W1`);
+  check(/Cases/i.test(sc) && /Share of cases matching a planted episode/i.test(sc) && /Share matching or explainable/i.test(sc) && /Episodes found cleanly/i.test(sc) && /Found diluted/i.test(sc) && /Trap cases \(designed\)/i.test(sc) && /Unrelated cases/i.test(sc), `${tag}: scorecard leads with cases, the two shares and clean, diluted and missed episodes`);
+  check(!/precision/i.test(await page.locator('#cases-block').innerText()), `${tag}: the case-level block does not use the word precision`);
+  const caseRowsN = await page.locator('#cases-block table tbody tr').count();
+  check(caseRowsN === def.score.caseSummary.cases, `${tag}: case table lists the engine's ${def.score.caseSummary.cases} cases (got ${caseRowsN})`);
+  check(await page.locator('#rule-detail table tbody tr').count() === 4 && !/\bW1\b/.test(await page.locator('#rule-detail table').first().evaluate((t) => t.textContent)), `${tag}: rule-level detail covers W2, P1, P2 (plus overall), not W1`);
+  check(/Designed traps/.test(sc) && /Ordinary honest activity the scenario generates/.test(sc), `${tag}: the causes list separates designed traps from ordinary honest activity`);
   check(await page.locator('#hygiene').count() === 1 && /outside the scorecard/i.test(await page.locator('#hygiene').innerText()) && /honest/i.test(await page.locator('#hygiene').innerText()), `${tag}: self-match hygiene block is separate and explains honest algo accounts`);
   const honest = await page.locator('#honesty').innerText();
-  check(/recall is near 1 by design/i.test(honest) && /35%/.test(honest) && /61%/.test(honest) && /documented explanation/.test(honest) && /scripted/.test(honest), `${tag}: honesty panel carries all four points with the measured baseline figures`);
+  check(/100 of 100 seeds/.test(honest) && /0\.29/.test(honest) && /0\.92/.test(honest) && /less sensitive across the board/.test(honest) && /0\.405/.test(honest) && /What stays contrived/i.test(honest) && /0\.93 to 0\.95/.test(honest) && /scripted/.test(honest) && !/35%|61%/.test(honest), `${tag}: honesty panel carries the 1.2.0 statements and the contrivances list`);
   const keyCells = await page.locator('#queue-body tr[data-id] td:last-child .status').allInnerTexts();
-  check(keyCells.length === N && keyCells.every((t) => ['Match', 'Explainable', 'Unrelated', 'Hygiene'].includes(t)), `${tag}: queue key column uses the three labels plus hygiene`);
+  check(keyCells.length === N && keyCells.every((t) => ['Match', 'Diluted', 'Explainable', 'Unrelated', 'Hygiene'].includes(t)), `${tag}: queue key column uses the three labels plus hygiene`);
   const keyMatches = await page.evaluate(() => [...document.querySelectorAll('#queue-body tr[data-id]')].map((r) => [r.dataset.id, r.querySelector('td:last-child').innerText.trim()]));
-  const wantShort = { MATCH: 'Match', EXPLAINABLE: 'Explainable', UNRELATED: 'Unrelated', SELF_MATCH: 'Hygiene' };
+  const wantShort = { MATCH: 'Match', MATCH_DILUTED: 'Diluted', EXPLAINABLE: 'Explainable', UNRELATED: 'Unrelated', SELF_MATCH: 'Hygiene' };
   check(keyMatches.every(([id, t]) => wantShort[labels[id].label] === t), `${tag}: every label in the UI equals the engine's label`);
   check(!OLD_WORDS.test(await page.locator('body').innerText()), `${tag}: no retired wording anywhere after unlock`);
-  await page.waitForFunction(() => /30 seeds run/.test(document.getElementById('seed-summary')?.textContent || ''), null, { timeout: 30000 });
+  await page.waitForFunction(() => /of 30 seeds/.test(document.getElementById('seed-summary')?.textContent || ''), null, { timeout: 30000 });
   const seedTxt = await page.locator('#explore-section').innerText();
-  check(/read the distribution, not one run/.test(seedTxt) && /median/.test(seedTxt), `${tag}: seed study states the single-run caveat and shows medians`);
+  check(/read the distribution, not one run/.test(seedTxt) && /median/.test(seedTxt) && /found cleanly in \d+ of 30 seeds/.test(seedTxt), `${tag}: seed study states the single-run caveat, shows medians and the one pass/fail line`);
+  const tr = await page.locator('#trap-rates').innerText();
+  check(/not pass or fail/.test(tr) && (tr.match(/\d+%/g) || []).length === 3, `${tag}: trap rates shown as three percentages, labelled not pass or fail`);
+  check(/Share of cases matching a planted episode/.test(seedTxt) && !/precision/i.test(await page.locator('#seed-host').evaluate((e) => e.textContent)), `${tag}: seed strips use case-level shares`);
   const dots = await page.locator('#seed-host .seed-dot, #seed-host .cur-dot').count();
   check(dots >= 90, `${tag}: seed study draws a dot per seed per measure (${dots})`);
   check(await page.locator('#seed-table tbody tr').count() === 30, `${tag}: seed table has 30 rows`);
-  check(/Episodes found/.test(await page.locator('#sweep-legend').innerText()) && /Decoys alerted/.test(await page.locator('#sweep-legend').innerText()) && /Unrelated groups/.test(await page.locator('#sweep-legend').innerText()) , `${tag}: sweep plots episodes found, decoys alerted and unrelated groups`);
+  const lg = await page.locator('#sweep-legend').innerText();
+  check(/Episodes found cleanly/.test(lg) && /found, diluted/.test(lg) && /Designed-trap cases/.test(lg) && /Unrelated cases/.test(lg), `${tag}: sweep plots clean and diluted finds, trap cases and unrelated cases`);
   await page.selectOption('#explorer-param', 'linkagePolicy');
   check(await page.locator('#sweep-host svg').count() === 1 && await page.locator('#linkage-effects tbody tr').count() === 3, `${tag}: linkage sweep shows largest cluster and honest pairs merged for three policies`);
   const eff = await page.locator('#linkage-effects').innerText();
-  check(/Largest group/i.test(eff) && /Honest pairs merged/i.test(eff), `${tag}: linkage effects table is labelled`);
+  check(/Found cleanly/i.test(eff) && /Found diluted/i.test(eff) && /Unrelated cases/i.test(eff) && /Largest group/i.test(eff) && /False-linked pairs/i.test(eff) && /Accounts named per matching alert/i.test(eff), `${tag}: linkage effects table has clean and diluted finds, unrelated cases, largest cluster, false-linked pairs and accounts per matching alert`);
   check(await overflow(page) <= 0, `${tag}: no horizontal overflow after unlock (${await overflow(page)}px)`);
 
   // export
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
   const json = JSON.parse(fs.readFileSync(await dl.path(), 'utf8'));
-  check(json.modelVersion === ENG.MODEL_VERSION && json.alerts.length === N && json.score && json.score.overall.groups && json.score.selfMatchHygiene && json.simulator === cfg && !('tp' in json.score.overall), `${tag}: export follows the new score shape`);
+  check(json.modelVersion === ENG.MODEL_VERSION && json.alerts.length === N && json.score && json.score.caseSummary && Array.isArray(json.score.cases) && json.score.ruleLevel.overall.groups && json.score.selfMatchHygiene && json.simulator === cfg && json.schema === 'trade-surveillance-export-3', `${tag}: export follows the new score shape`);
   check(Array.isArray(json.seedStudy?.rows) && json.seedStudy.rows.length === 30, `${tag}: export includes the seed study`);
 
   await page.locator('#queue-body tr[data-id]').nth(1).click();
   await page.locator('#case-section').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(SHOTS, `${cfg}-${vpName}-case-revealed.png`), fullPage: true });
+
+  // default-policy clusters are larger in 1.2.0: open the alert with the biggest one on the seed that has it
+  let bestSeed = 1, bestAlert = null, bestN = -1;
+  for (let sd = 1; sd <= 8; sd++) for (const a of ENG.runScenario(cfg, { seed: sd }).alerts) { const k = a.cluster ? a.cluster.accounts.length : 0; if (k > bestN) { bestN = k; bestSeed = sd; bestAlert = a; } }
+  await page.selectOption('#seed-select', String(bestSeed));
+  await page.waitForSelector(`#queue-body tr[data-id="${bestAlert.id}"]`);
+  await page.locator(`#queue-body tr[data-id="${bestAlert.id}"]`).click();
+  await page.waitForSelector('#panel-accounts svg');
+  check(await page.locator('#panel-accounts circle.node').count() <= 12 && await overflow(page) <= 0, `${tag}: default policy, seed ${bestSeed}, ${bestN}-account cluster: graph capped and no page overflow (${await overflow(page)}px)`);
+  await page.locator('#case-section').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(SHOTS, `${cfg}-${vpName}-bigcluster.png`), fullPage: true });
 
   check(errors.length === 0, `${tag}: no console errors${errors.length ? ' -> ' + errors.join(' | ') : ''}`);
   check(external.length === 0, `${tag}: no requests outside the local server${external.length ? ' -> ' + external.join(', ') : ''}`);

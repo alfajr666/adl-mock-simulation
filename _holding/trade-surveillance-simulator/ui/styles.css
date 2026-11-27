@@ -190,7 +190,7 @@ th[aria-sort="ascending"] button, th[aria-sort="descending"] button { color: var
 .rulecell svg { width: 13px; height: 13px; flex: none; }
 .status { display: inline-flex; border-radius: 5px; padding: 2px 7px; background: var(--panel-2); color: var(--muted); font-size: 11px; }
 .status.escalate { color: var(--red); } .status.close { color: var(--green); } .status.monitor { color: var(--amber); }
-.status.MATCH { color: var(--green); } .status.EXPLAINABLE { color: var(--amber); } .status.UNRELATED { color: var(--muted); } .status.SELF_MATCH { color: var(--blue); }
+.status.MATCH { color: var(--green); } .status.MATCH_DILUTED { color: var(--accent); } .status.EXPLAINABLE { color: var(--amber); } .status.UNRELATED { color: var(--muted); } .status.SELF_MATCH { color: var(--blue); }
 .hyg { color: var(--blue); font-size: 10.5px; border: 1px solid #2c4666; border-radius: 4px; padding: 0 5px; }
 .empty { padding: 26px 18px; color: var(--muted); }
 
@@ -291,3 +291,7 @@ summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; 
 @media (forced-colors: active) {
   .opt:has(input:checked), .inst[aria-pressed="true"] { outline: 2px solid Highlight; }
 }
+.data-scroll { max-height: 320px; overflow-y: auto; }
+.data-scroll thead th { position: sticky; top: 0; background: var(--panel); }
+#trap-rates h4 { margin-bottom: 2px; }
+#cases-block > * + * { margin-top: 14px; }

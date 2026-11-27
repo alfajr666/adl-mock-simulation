@@ -13,6 +13,7 @@ export const PATTERN_RULE_IDS = ['W2', 'P1', 'P2'];
 
 export const LABELS = {
   MATCH: { short: 'Match', long: 'Matches a planted episode' },
+  MATCH_DILUTED: { short: 'Diluted', long: 'Overlaps a planted episode, diluted' },
   EXPLAINABLE: { short: 'Explainable', long: 'Explainable: needs a documented explanation' },
   UNRELATED: { short: 'Unrelated', long: 'Unrelated to anything planted' },
   SELF_MATCH: { short: 'Hygiene', long: 'Self-match hygiene (outside the scorecard)' },
@@ -31,7 +32,7 @@ export const PARAMS = [
   { key: 'w2ClusterShare', rule: 'W2', label: 'Share of the group’s volume kept inside the group', min: 0, max: 1, step: 0.05, kind: 'share',
     help: 'W2 needs at least this share of the volume the group took part in to be between its own accounts.' },
   { key: 'w2NetRatio', rule: 'W2', label: 'Net position change allowed (W2)', min: 0, max: 2, step: 0.05, kind: 'ratio',
-    help: 'The group’s net buying minus selling, as a share of its internal volume, must be at most this: a small net position change relative to the round-trip volume.' },
+    help: 'The group’s buying from outsiders minus its selling to outsiders, as a share of its internal volume, must be at most this. A one-way internal transfer also scores 0.' },
   { key: 'p1MoveScore', rule: 'P1', label: 'Move score', min: 1, max: 30, step: 0.5, kind: 'num',
     help: 'The size of the move relative to the instrument’s own baseline volatility, scaled for window length. Higher means a bigger move than that instrument normally makes. It is a plain ratio, not a statistical test.' },
   { key: 'p1VolMult', rule: 'P1', label: 'Volume as a multiple of baseline', min: 1, max: 10, step: 0.25, kind: 'mult',
@@ -48,7 +49,7 @@ export const PARAMS = [
 
 export const THRESHOLD_LABELS = {
   w1MinCount: 'Self-matches (count)', w1MinLots: 'Self-match size (lots)',
-  w2ClusterShare: 'Share of the group’s volume kept inside the group', w2NetRatio: 'Net position change ÷ internal volume', w2InstrumentShare: 'Group share of instrument volume',
+  w2ClusterShare: 'Share of the group’s volume kept inside the group', w2NetRatio: 'External buys minus sells ÷ internal volume', w2InstrumentShare: 'Group share of instrument volume',
   p1MoveScore: 'Move score', p1VolMult: 'Volume vs baseline', p1MinReturnBps: 'Move (basis points)',
   p2RampShare: 'Group share of aggressive buying', p2NetSellRatio: 'Selling afterwards vs rise buying',
 };
@@ -56,7 +57,7 @@ export const THRESHOLD_LABELS = {
 /** Metric label and display kind, per key. */
 export const METRICS = {
   selfTradeCount: ['Self-matches', 'int'], selfTradeQty: ['Self-match quantity', 'qty'], selfTradeNotional: ['Self-match value', 'money'],
-  clusterInternalShare: ['Share of the group’s volume kept inside the group', 'pct'], netChangeOverInternal: ['Net position change ÷ internal volume', 'ratio'],
+  clusterInternalShare: ['Share of the group’s volume kept inside the group', 'pct'], netChangeOverInternal: ['External buys minus external sells ÷ internal volume', 'ratio'], internalRoundTripShare: ['Internal round-trip share (two-way exchange)', 'pct'],
   instrumentInternalShare: ['Group trading as share of instrument volume', 'pct'], internalQty: ['Internal quantity', 'qty'], externalQty: ['Quantity traded with outsiders', 'qty'],
   windowBins: ['Window length', 'bins'], peakWindowStartMs: ['Peak window starts', 'time'],
   returnBps: ['Price move', 'bpsSigned'], moveScore: ['Move score', 'x'], volumeMultiple: ['Volume vs baseline', 'mult'], direction: ['Direction', 'text'],
@@ -64,7 +65,7 @@ export const METRICS = {
   baselineBins: ['Baseline bins used', 'binrange'], startBin: ['First bin of the move', 'int'], endBin: ['Last bin of the move', 'int'],
   rampAggressiveBuyShare: ['Group share of market-order buying in the rise', 'pct'], rampAggressiveBuyQty: ['Group market-order buying', 'qty'],
   followNetSellQty: ['Group net selling afterwards', 'qty'], followNetSellRatio: ['Selling afterwards ÷ rise buying', 'ratio'],
-  accumulationNetQty: ['Group net buying before the move (lookback)', 'qty'], accumulationBuyShareOfVolume: ['Buying as share of the group’s volume before the move', 'pct'],
+  accumulationNetQty: ['Group net buying before the move (lookback)', 'qty'], accumulationBuyShareOfVolume: ['Group buying from outsiders as a share of instrument volume before the move', 'pct'],
   pnlTicksQty: ['Group profit and loss over the period', 'moneySigned'], cashTicksQty: ['Group cash flow', 'moneySigned'], closingPosition: ['Group position at the end', 'qty'],
   markPrice: ['Last price used for marking', 'price'], p1AlertId: ['Linked price-move alert', 'text'], peakBin: ['Peak bin', 'int'], rampEndBin: ['Rise ends at bin', 'int'],
   rampWindow: ['Rise window', 'window'], followWindow: ['Following window', 'window'], lookbackWindow: ['Lookback window', 'window'],
@@ -75,16 +76,22 @@ const COMMON_ACTIONS = [
   ['File a suspicious-order report', 'Record the activity in a formal report for the venue’s compliance function and, where its rules require it, a regulator. The report records a concern; it does not state a conclusion.'],
 ];
 
+/** Only these two causes are designed teaching traps; everything else is ordinary honest activity the scenario generates. */
+export const DESIGNED_CAUSES = new Set(['same-owner-cross', 'benign-shock']);
 export const CAUSES = {
   'same-owner-cross': 'Sub-accounts of one market maker crossing trades to move inventory. Same-owner trades are a wash in form; the alert is expected and needs a documented explanation.',
   'benign-shock': 'A news-style price jump with broad participation.',
+  'honest-linked-trading': 'Honest accounts that the linkage joins into one group (family, colleagues, one person with several accounts) trading with each other.',
+  'benign-burst': 'An honest momentum burst: many ordinary accounts chasing a move.',
+  'block-trade': 'An honest block order: one large trade that moved the price and volume.',
+  'background-collision': 'A group of honest accounts joined only because their pooled register attributes collide.',
   'natural-move': 'An ordinary move in a busy instrument that happened to pass the price and volume tests.',
   'coincidental-link': 'Accounts of one honest pair that share a single register attribute by coincidence.',
-  'background-collision': 'A group of honest accounts joined only because their pooled register attributes collide.',
   unattributed: 'No planted cause; the thresholds were simply loose enough to fire.',
   'honest-algo': 'An honest algorithmic account that occasionally trades with itself.',
   'planted-account': 'An account that belongs to a planted episode.',
 };
+export const GROUP_KINDS = { family: 'a family pair', household: 'a household', trio: 'a group of three people', quad: 'a group of colleagues', owner: 'one person with several accounts' };
 
 export const EPISODE_TEXT = {
   wash: 'a planted wash-trading episode: a small ring of accounts under one controller trading among themselves to make an instrument look busier than it is',
@@ -166,17 +173,29 @@ export function methodRules(th, defs) {
   const base = th.p1Baseline === 'trailing' ? 'the bins just before each window (trailing)' : 'the first bins of the session (a clean warm-up)';
   return [
     ['W1', 'Self-match (hygiene)', `Raises an alert when the same account is on both sides of a trade: at least ${v('w1MinCount')} such trade(s) of at least ${v('w1MinLots')} lot(s); self-matches by one account in one instrument within ${v('w1MergeBins')} bins become one alert. It is cheap and precise about what it sees, but not about intent: honest algorithmic accounts self-match too. It is therefore reported as hygiene, outside the scorecard.`],
-    ['W2', 'Linked accounts trading together', `Groups accounts using the linkage policy, then looks at windows of ${v('w2WindowBins')} bins. A group is flagged when at least ${v('w2ClusterShare', p)} of the volume it took part in was between its own accounts, its internal trading was at least ${v('w2InstrumentShare', p)} of all volume in the instrument, its net position change was at most ${v('w2NetRatio', p)} of its internal volume, and it traded at least ${v('w2MinInternalLots')} lots internally. Flagged windows within ${v('w2MergeGapBins')} bins are merged.`],
+    ['W2', 'Linked accounts trading together', `Groups accounts using the linkage policy, then looks at windows of ${v('w2WindowBins')} bins. A group is flagged when at least ${v('w2ClusterShare', p)} of the volume it took part in was between its own accounts, its internal trading was at least ${v('w2InstrumentShare', p)} of all volume in the instrument, its external buying minus external selling was at most ${v('w2NetRatio', p)} of its internal volume (so a one-way internal transfer also scores 0), and it traded at least ${v('w2MinInternalLots')} lots internally. Flagged windows within ${v('w2MergeGapBins')} bins are merged.`],
     ['P1', 'Price and volume move', `Compares each window of ${v('p1WindowBins')} bins, rising and falling separately, with a baseline of ${v('p1BaselineBins')} bins taken from ${base}. Flags a move score of at least ${v('p1MoveScore')} (the move relative to the instrument’s own baseline volatility, scaled for window length), a move of at least ${v('p1MinReturnBps')} basis points, and turnover of at least ${v('p1VolMult')}× normal. The baseline is ${th.p1Mode === 'global' ? '<strong>one market-wide value</strong>' : 'each instrument’s own'}. It names no accounts: it only says that something moved.`],
-    ['P2', 'Linked group rides the move', `Attached to a rising P1 alert. Looks at groups of at least ${v('p2MinClusterSize')} linked accounts and asks whether one group supplied at least ${v('p2RampShare', p)} of the market-order buying during the rise, bought at least ${v('p2MinRampLots')} lots that way, and then, within the next ${v('p2FollowBins')} bins, sold at least ${v('p2NetSellRatio', p)} of that amount. It also reports what the group bought in the ${v('p2LookbackBins')} bins before the move.`],
+    ['P2', 'Linked group rides the move', `Attached to a rising P1 alert. Looks at groups of at least ${v('p2MinClusterSize')} linked accounts and asks whether one group supplied at least ${v('p2RampShare', p)} of the market-order buying during the rise, bought at least ${v('p2MinRampLots')} lots that way, and then, within the next ${v('p2FollowBins')} bins, sold at least ${v('p2NetSellRatio', p)} of that amount. It also reports what the group bought from outsiders in the ${v('p2LookbackBins')} bins before the move, and, for W2, how much of the internal trading was a two-way round trip.`],
   ];
 }
 
 export const HONESTY = [
-  'Every designed trap and both episodes are planted by the same code that is scoring you. Recall is near 1 by design. These figures show how the rules react to designed situations across seeds; they are not a measure of real-world detection performance.',
-  'Baselines default to a clean warm-up period that the planted activity avoids by construction. When the baseline window spans the episodes, the price-and-volume rule misses the pump in a large share of seeds: over 100 seeds the pump was found by P1 on average in 35% of equity runs and 61% of crypto runs, against 100% with the defaults. Try a longer baseline length with the warm-up setting.',
-  'The market maker’s sub-account crosses are same-owner trades. Most rulebooks would treat them as wash trades in form, so they stand for an alert that needs a documented explanation, not for a mistake by the rule.',
-  'The retail promotion crowd is scripted. The pump group’s profit from selling into it is assumed by the scenario, not an emergent result.',
+  'Both planted episodes were found cleanly at default settings in 100 of 100 seeds in each market (seeds 1–100; the P2 rule alone: 100 equity, 97 crypto). Recall is near 1 by design. These figures show how the rules react to designed situations; they are not a measure of real-world detection performance.',
+  'The designed traps are reported, not required. The explainable market-maker alert fires in 95% (equity) and 98% (crypto) of seeds; the news-shock alert fires on P1 in 100% and 100%, and on P2 in 1% and 2%.',
+  'At case level the share of cases matching a planted episode has a median of 0.29 in both markets (minimum 0.18 and 0.17, maximum 0.50 and 0.40), with only 8 distinct values and none in more than 29 of 100 seeds. The share matching or explainable has a median of 0.43 (equity) and 0.50 (crypto). It moves from seed to seed, so read the distribution, not one run.',
+  'Linkage changes the picture. Strict linkage finds the ring cleanly in 2% (equity) and 16% (crypto) of seeds. Loose linkage finds it cleanly in 0% and 8%, the rest diluted (1.00 and 0.92 diluted finds per run), with a largest group of 48.8 and 35.0 accounts, 771 and 393 falsely linked pairs, and 4.0 and 9.8 unrelated cases, against 2.9 and 2.9 at the default.',
+  'Baseline length matters, but not in the way you might expect. A warm-up long enough to span the episodes also spans the news shock, so it makes the price-and-volume rule less sensitive across the board: the pump is still found by P1 at 0.92 (equity) and 1.00 (crypto), but the shock alert drops to 0.00 and 0.01. A trailing baseline and a clean warm-up both give 1.00 for both.',
+  'The ring’s internal trading is a median 0.42 (equity) and 0.44 (crypto) of its instrument’s quantity, against a threshold of 0.25. The pump group supplies a median 0.60 and 0.62 of aggressive buying in the rise, against a threshold of 0.25.',
+  'Self-match hygiene (W1): honest algorithmic accounts alert in every run; planted accounts alert in 62% (equity) and 30% (crypto) of runs. W1 is outside every headline figure.',
+  'No rule that uses only the register (group size, or sharing any single attribute) picks out planted accounts with a pooled precision above 0.405, against a base rate of 0.18. The register is not an answer key.',
+];
+export const CONTRIVANCES = [
+  'The wash ring trades only inside the spread at a steady rate and ends near flat (ring-side volume 0.93 to 0.95 internal).',
+  'Its hub is reachable only through two weak attributes. That is why strict linkage loses the ring, by design.',
+  'The ramp-interest and promotion crowds are scripted, and the pump group’s profit from selling into them is assumed by the scenario, not emergent.',
+  'Planted accounts’ cover activity in other names is a fixed fraction (about a third) of the retail rate.',
+  'The baseline period is clean by construction. A real desk builds baselines from history that may already be contaminated.',
+  'The scenario sets honest volume in the wash target so the ring is 0.42 to 0.44 of its quantity at the median. That is a design choice, not a market fact.',
 ];
 
 export const METHOD_GENERAL = {

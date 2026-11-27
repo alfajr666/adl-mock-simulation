@@ -41,6 +41,7 @@ export function caseView(result, alertId) {
   const rowOf = new Map(register.rows.map((r) => [r.acct, r]));
   const accounts = accountIds.map((a) => ({
     ...rowOf.get(a),
+    attributes: { ...rowOf.get(a).attributes },
     clusterId: linkage.clusterOf[a],
     finalPosition: (result.ledger.positions[a] || {})[inst] || 0,
     aggressiveBuyQty: aggBuy.get(a) || 0,

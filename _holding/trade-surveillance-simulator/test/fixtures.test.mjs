@@ -12,32 +12,32 @@ const near = (x, y, d = 1e-4) => assert.ok(Math.abs(x - y) < d, `${x} vs ${y}`);
 
 const FIX = {
   equity: {
-    tape: { orders: 15844, cancels: 11161, trades: 3518, band: 17, checksum: 2280383431 },
-    alerts: { total: 6, match: 3, explainable: 1, unrelated: 2 },
-    groups: { total: 6, episodeMatches: 3, explainable: 1, unrelated: 2 },
-    byRuleAlerts: { W2: [2, 1, 1, 0], P1: [3, 1, 0, 2], P2: [1, 1, 0, 0] },        // total, match, explainable, unrelated
-    precision: { gMatch: 0.5, gExpl: 2 / 3, aMatch: 0.5, aExpl: 2 / 3 },
-    causes: { 'W2:same-owner-cross': 1, 'P1:natural-move': 1, 'P1:benign-shock': 1 },
-    selfMatch: { alerts: 6, planted: 1, algo: 5, flagged: 3 },
-    wash: { internalQty: 155100, trades: 113, selfTrades: 2, instShare: 0.7340, sideShare: 0.9527 },
-    pump: { pnl: 813500 },
-    p2: { share: 0.8950, rampQty: 19600, netSell: 22400, pnl: 813500, acc: 2300, accShare: 0.1825 },
-    clusters: { weak2: '3,4,2,2,2,2,2', strongCount: 5, strongLargest: 3, weakCount: 2, weakLargest: 46 },
-    strongEpisodes: 1, looseGroups: { total: 9, unrelated: 7, explainable: 0 },
+    tape: { orders: 15845, cancels: 10960, trades: 3684, band: 18, checksum: 4106695170 },
+    alerts: { total: 8, match: 3, matchDiluted: 0, explainable: 1, unrelated: 4 },
+    groups: { total: 8, episodeMatches: 3, diluted: 0, explainable: 1, unrelated: 4 },
+    cases: { cases: 7, episodeCases: 2, dilutedEpisodeCases: 0, trapCases: 2, explainableCases: 1, unrelatedCases: 3, shareMatchingEpisode: 2 / 7, shareMatchingOrExplainable: 3 / 7, episodesFound: 2, episodesMissed: 0 },
+    byRuleAlerts: { W2: [5, 1, 0, 1, 3], P1: [2, 1, 0, 0, 1], P2: [1, 1, 0, 0, 0] },        // total, match, diluted, explainable, unrelated
+    causes: { 'W2:honest-linked-trading': 3, 'W2:same-owner-cross': 1, 'P1:benign-shock': 1 },
+    selfMatch: { alerts: 6, planted: 0, algo: 6, flagged: 2 },
+    wash: { internalQty: 46400, trades: 80, selfTrades: 0, instShare: 0.3402, sideShare: 0.9289 },
+    pump: { pnl: 765100 },
+    p2: { share: 0.75, rampQty: 14100, netSell: 17300, pnl: 765100, acc: 1600, accShare: 0.1301 },
+    clusters: { weak2: '4,4,2,2,2,2,3,2,3,3,4,2', strongCount: 10, strongLargest: 4, weakCount: 1, weakLargest: 49 },
+    strong: { found: 1, diluted: 0 }, loose: { found: 1, diluted: 1 },
   },
   crypto: {
-    tape: { orders: 12277, cancels: 8691, trades: 3117, band: 0, checksum: 1115383056 },
-    alerts: { total: 7, match: 4, explainable: 2, unrelated: 1 },
-    groups: { total: 5, episodeMatches: 3, explainable: 1, unrelated: 1 },
-    byRuleAlerts: { W2: [3, 1, 2, 0], P1: [3, 2, 0, 1], P2: [1, 1, 0, 0] },
-    precision: { gMatch: 0.6, gExpl: 0.8, aMatch: 4 / 7, aExpl: 6 / 7 },
-    causes: { 'W2:same-owner-cross': 2, 'P1:benign-shock': 1 },
-    selfMatch: { alerts: 9, planted: 1, algo: 8, flagged: 3 },
-    wash: { internalQty: 32630, trades: 83, selfTrades: 1, instShare: 0.8041, sideShare: 0.9470 },
-    pump: { pnl: 307780 },
-    p2: { share: 0.7184, rampQty: 2960, netSell: 3920, pnl: 307780, acc: 1680, accShare: 0.6176 },
-    clusters: { weak2: '2,2,4,2,3,2,2', strongCount: 5, strongLargest: 3, weakCount: 4, weakLargest: 27 },
-    strongEpisodes: 2, looseGroups: { total: 10, unrelated: 7, explainable: 0 },
+    tape: { orders: 12625, cancels: 8861, trades: 3310, band: 0, checksum: 2839599422 },
+    alerts: { total: 11, match: 3, matchDiluted: 0, explainable: 2, unrelated: 6 },
+    groups: { total: 11, episodeMatches: 3, diluted: 0, explainable: 2, unrelated: 6 },
+    cases: { cases: 10, episodeCases: 2, dilutedEpisodeCases: 0, trapCases: 3, explainableCases: 2, unrelatedCases: 5, shareMatchingEpisode: 0.2, shareMatchingOrExplainable: 0.4, episodesFound: 2, episodesMissed: 0 },
+    byRuleAlerts: { W2: [7, 1, 0, 2, 4], P1: [3, 1, 0, 0, 2], P2: [1, 1, 0, 0, 0] },
+    causes: { 'W2:background-collision': 2, 'W2:same-owner-cross': 2, 'W2:honest-linked-trading': 2, 'P1:benign-shock': 1, 'P1:benign-burst': 1 },
+    selfMatch: { alerts: 6, planted: 1, algo: 5, flagged: 3 },
+    wash: { internalQty: 10000, trades: 59, selfTrades: 2, instShare: 0.5705, sideShare: 0.9474 },
+    pump: { pnl: 307200 },
+    p2: { share: 0.6667, rampQty: 1480, netSell: 2470, pnl: 340360, acc: 1800, accShare: 0.5788 },
+    clusters: { weak2: '4,2,4,11,5,2,2,2,2', strongCount: 8, strongLargest: 11, weakCount: 5, weakLargest: 32 },
+    strong: { found: 1, diluted: 0 }, loose: { found: 1, diluted: 1 },
   },
 };
 
@@ -52,23 +52,24 @@ for (const id of ['equity', 'crypto']) {
     assert.equal(tapeChecksum(r.tape.trades), f.tape.checksum);
   });
 
-  test(`${id} seed 1: alert-level and group-level score`, () => {
+  test(`${id} seed 1: alert-level, group-level and case-level score`, () => {
     const r = runScenario(id, { seed: 1 });
     const o = r.score.overall;
     assert.deepEqual(o.alerts, f.alerts);
     assert.deepEqual(o.groups, f.groups);
-    assert.deepEqual(o.episodes, { planted: 2, found: 2, missed: 0 });
-    near(o.precision.group.match, f.precision.gMatch, 1e-12);
-    near(o.precision.group.matchOrExplainable, f.precision.gExpl, 1e-12);
-    near(o.precision.alert.match, f.precision.aMatch, 1e-12);
-    near(o.precision.alert.matchOrExplainable, f.precision.aExpl, 1e-12);
+    assert.deepEqual(o.episodes, { planted: 2, found: 2, diluted: 0, missed: 0 });
     assert.equal(o.recall, 1);
-    for (const [rule, [total, match, expl, unrel]] of Object.entries(f.byRuleAlerts)) {
-      assert.deepEqual(r.score.byRule[rule].alerts, { total, match, explainable: expl, unrelated: unrel }, rule);
+    near(o.precision.group.match, f.groups.episodeMatches / f.groups.total, 1e-12);
+    near(o.precision.alert.matchOrExplainable, (f.alerts.match + f.alerts.explainable) / f.alerts.total, 1e-12);
+    const c = r.score.caseSummary;
+    for (const [k, v] of Object.entries(f.cases)) near(c[k], v, 1e-12);
+    assert.equal(r.score.cases.length, c.cases);
+    for (const [rule, [total, match, dil, expl, unrel]] of Object.entries(f.byRuleAlerts)) {
+      assert.deepEqual(r.score.byRule[rule].alerts, { total, match, matchDiluted: dil, explainable: expl, unrelated: unrel }, rule);
     }
     assert.deepEqual(r.score.causesByRule, f.causes);
     assert.equal(r.score.byRule.W1, undefined, 'W1 is not a pattern rule');
-    assert.deepEqual(Object.keys(r.score).sort(), ['byEpisode', 'byRule', 'causes', 'causesByRule', 'decoysAlerted', 'labels', 'overall', 'selfMatch']);
+    assert.deepEqual(Object.keys(r.score).sort(), ['byEpisode', 'byRule', 'caseSummary', 'cases', 'causes', 'causesByRule', 'decoysAlerted', 'labels', 'overall', 'selfMatch']);
   });
 
   test(`${id} seed 1: self-match hygiene block is separate`, () => {
@@ -86,6 +87,7 @@ for (const id of ['equity', 'crypto']) {
     assert.equal(wash.stats.internalTrades, f.wash.trades);
     assert.equal(wash.stats.selfTrades, f.wash.selfTrades);
     near(wash.stats.internalShareOfInstrumentQty, f.wash.instShare);
+    assert.ok(wash.stats.internalShareOfInstrumentQty < 0.65, 'the ring is not most of the instrument any more');
     near(wash.stats.internalShareOfRingSideVolume, f.wash.sideShare);
     const pump = r.groundTruth.episodes.find((e) => e.type === 'pump');
     assert.equal(pump.stats.pnlTicksQty, f.pump.pnl);
@@ -108,9 +110,8 @@ for (const id of ['equity', 'crypto']) {
     assert.equal(Math.max(...cl('strong1').map((c) => c.accounts.length)), f.clusters.strongLargest);
     assert.equal(cl('weak1').length, f.clusters.weakCount);
     assert.equal(Math.max(...cl('weak1').map((c) => c.accounts.length)), f.clusters.weakLargest);
-    const strict = runScenario(id, { seed: 1, linkagePolicy: 'strong1' });
-    assert.equal(strict.score.overall.episodes.found, f.strongEpisodes);
-    const loose = runScenario(id, { seed: 1, linkagePolicy: 'weak1' });
-    assert.deepEqual([loose.score.overall.groups.total, loose.score.overall.groups.unrelated, loose.score.overall.groups.explainable], [f.looseGroups.total, f.looseGroups.unrelated, f.looseGroups.explainable]);
+    const e = (p) => runScenario(id, { seed: 1, linkagePolicy: p }).score.overall.episodes;
+    assert.deepEqual([e('strong1').found, e('strong1').diluted], [f.strong.found, f.strong.diluted]);
+    assert.deepEqual([e('weak1').found, e('weak1').diluted], [f.loose.found, f.loose.diluted]);
   });
 }

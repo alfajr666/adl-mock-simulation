@@ -63,3 +63,36 @@ test('ground-truth role strings for planted accounts carry the planted- prefix',
   const planted = Object.values(r.groundTruth.accountRoles).filter((x) => /wash|pump|maker-sub/.test(x));
   assert.ok(planted.length >= 9 && planted.every((x) => x.startsWith('planted-')));
 });
+
+test('register-only classifiers do not identify planted accounts (100 seeds, pooled precision at most 0.5)', async () => {
+  const { buildEquity } = await import('../engine/scenario-equity.js');
+  const { buildCrypto } = await import('../engine/scenario-crypto.js');
+  const { buildLinkage } = await import('../engine/linkage.js');
+  for (const [id, build] of [['equity', buildEquity], ['crypto', buildCrypto]]) {
+    const stats = {};
+    const add = (k, flagged, tp) => { const s = (stats[k] ||= { flagged: 0, tp: 0 }); s.flagged += flagged; s.tp += tp; };
+    for (let seed = 1; seed <= 100; seed++) {
+      const scn = build(seed);
+      const reg = scn.register;
+      const planted = (a) => (scn.truth.roles[a] || '').startsWith('planted-');
+      for (const policy of ['strong1', 'weak2', 'weak1']) {
+        const l = buildLinkage(reg, policy);
+        for (let k = 2; k <= 5; k++) {
+          const flagged = reg.rows.map((r) => r.acct).filter((a) => l.clusters.some((c) => c.accounts.length >= k && c.accounts.includes(a)));
+          add(`${policy} cluster size >= ${k}`, flagged.length, flagged.filter(planted).length);
+        }
+      }
+      for (const a of reg.schema) {
+        const count = new Map();
+        for (const r of reg.rows) count.set(r.attributes[a.key], (count.get(r.attributes[a.key]) || 0) + 1);
+        const flagged = reg.rows.filter((r) => count.get(r.attributes[a.key]) > 1).map((r) => r.acct);
+        add(`shares ${a.key}`, flagged.length, flagged.filter(planted).length);
+      }
+    }
+    for (const [rule, s] of Object.entries(stats)) {
+      if (s.flagged === 0) continue;
+      assert.ok(s.tp / s.flagged <= 0.5, `${id}: "${rule}" identifies planted accounts with precision ${(s.tp / s.flagged).toFixed(3)}`);
+    }
+    assert.ok(Object.keys(stats).length >= 16);
+  }
+});
