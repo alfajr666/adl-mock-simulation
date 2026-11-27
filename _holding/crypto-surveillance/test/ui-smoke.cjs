@@ -1,7 +1,7 @@
 /*
  * UI smoke test (not part of `npm test`). Run: npm run test:ui
- * Serves this folder with `python3 -m http.server` on a free port and drives equity.html and
- * crypto.html with Playwright at 1280 px and 390 px. Needs `require('playwright')` to resolve
+ * Serves this folder with `python3 -m http.server` on a free port and drives index.html
+ * with Playwright at 1280 px and 390 px. Needs `require('playwright')` to resolve
  * (set NODE_PATH if it is installed globally). Screenshots go to $SURV_SHOTS, default ./.scratch/ui-shots.
  * Expected alert counts are read from the engine at run time, not hard-coded.
  */
@@ -57,7 +57,7 @@ async function runPage(browser, base, ENG, LINKS, cfg, vpName) {
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('request', (r) => { if (!r.url().startsWith(base) && !r.url().startsWith('data:') && !r.url().startsWith('blob:')) external.push(r.url()); });
   const t0 = Date.now();
-  await page.goto(`${base}/${cfg}.html`, { waitUntil: 'load' });
+  await page.goto(`${base}/index.html`, { waitUntil: 'load' });
   await page.waitForSelector('#queue-body tr[data-id]');
   check(Date.now() - t0 < 3000, `${tag}: loads and renders quickly (${Date.now() - t0} ms incl. page load)`);
 
@@ -309,30 +309,12 @@ async function runPage(browser, base, ENG, LINKS, cfg, vpName) {
   const browser = await chromium.launch();
   try {
     await waitFor(`${base}/index.html`);
-    for (const cfg of ['equity', 'crypto']) for (const vp of ['desktop', 'mobile']) await runPage(browser, base, ENG, LINKS, cfg, vp);
-
-    // landing page
-    const ctx = await browser.newContext({ viewport: VIEWPORTS.mobile, deviceScaleFactor: 1 });
-    const lp = await ctx.newPage();
-    const lerr = [];
-    lp.on('pageerror', (e) => lerr.push(String(e))); lp.on('console', (m) => { if (m.type() === 'error') lerr.push(m.text()); });
-    await lp.goto(`${base}/index.html`);
-    await lp.waitForFunction(() => document.getElementById('model-version').textContent.length > 0);
-    check(lerr.length === 0, 'landing: no console errors');
-    check(await lp.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'landing: no horizontal overflow at 390 px');
-    check(!OLD_WORDS.test(await lp.locator('body').innerText()), 'landing: no retired wording');
-    check(await lp.locator('a[data-link="case-equity"]').getAttribute('href') === LINKS.CASE_STUDY_URLS.equity && await lp.locator('a[data-link="case-crypto"]').getAttribute('href') === LINKS.CASE_STUDY_URLS.crypto, 'landing: both per-market case-study links are set');
-    check(/easier than a real one/.test(await lp.locator('#num-h').evaluate((h) => h.parentElement.textContent)), 'landing: the numbers paragraph carries the planted-is-easier caveat');
-    check(await lp.locator('a[data-link="source"]').getAttribute('href') === 'https://github.com/alfajr666/trade-surveillance-simulator', 'landing: source link is the configured constant');
-    await lp.screenshot({ path: path.join(SHOTS, 'index-mobile.png'), fullPage: true });
-    await lp.setViewportSize(VIEWPORTS.desktop);
-    await lp.screenshot({ path: path.join(SHOTS, 'index-desktop.png'), fullPage: true });
-    await ctx.close();
+    for (const cfg of [LINKS.MARKET]) for (const vp of ['desktop', 'mobile']) await runPage(browser, base, ENG, LINKS, cfg, vp);
 
     // file:// fallback message
     const fctx = await browser.newContext({ viewport: VIEWPORTS.desktop });
     const fp = await fctx.newPage();
-    await fp.goto('file://' + path.join(ROOT, 'equity.html'));
+    await fp.goto('file://' + path.join(ROOT, 'index.html'));
     await fp.waitForTimeout(500);
     check(await fp.locator('#runtime-warning').isVisible() && (await fp.locator('#runtime-warning').innerText()).includes('http.server'), 'file://: inline message asks to serve over HTTP');
     await fctx.close();

@@ -25,7 +25,7 @@ jobs:
       - name: Stage public files
         run: |
           mkdir public
-          cp index.html equity.html crypto.html public/
+          cp index.html public/
           cp -r ui engine public/
       - uses: actions/upload-pages-artifact@v4
         with:

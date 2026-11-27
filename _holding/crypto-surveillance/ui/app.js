@@ -3,7 +3,7 @@ import { runScenario, sweep, seedStudy, tellStudy, caseView, MODEL_VERSION, DEFA
 import { esc, int, dec1, dec2, pct, makeTimeFormat, price as fmtPrice, money as fmtMoney, moneySigned, download } from './format.js';
 import { TEXT, RULES, PATTERN_RULE_IDS, RULE_INFO, LABELS, DECISIONS, PARAMS, THRESHOLD_LABELS, METRICS, CAUSES, DESIGNED_CAUSES, GROUP_KINDS, EPISODE_TEXT, HONESTY, CONTRIVANCES, TELLS_FRAMING, TELLS_TEXT, methodRules, METHOD_GENERAL } from './text.js';
 import { marker, tapeBars, tapeSpark, priceVolume, clusterChart, linkGraph, lineChart, distStrips, attachHover, binOf, COLORS } from './charts.js';
-import { CASE_STUDY_URLS, SOURCE_URL, HOME_URL } from './links.js';
+import { CASE_STUDY_URLS, SITE_URLS, SOURCE_URL, HOME_URL } from './links.js';
 
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
 const STUDY_SEEDS = Array.from({ length: 30 }, (_, i) => i + 1);
@@ -45,13 +45,13 @@ export function startApp(configId) {
 
   /* ------------------------------------------------------------ shell */
   function buildShell() {
-    const other = configId === 'equity' ? ['crypto.html', 'Crypto spot venue'] : ['equity.html', 'Equity board'];
+    const other = configId === 'equity' ? [SITE_URLS.crypto, 'Crypto spot venue simulator'] : [SITE_URLS.equity, 'Equity board simulator'];
     root.innerHTML = `
     <a class="skip" href="#queue-section">Skip to the alert queue</a>
     <div class="shell">
       <header class="topline">
         <div>
-          <nav class="topnav" aria-label="Simulators"><a class="badge" href="index.html">All simulators</a><a class="badge" href="${other[0]}">${esc(other[1])}</a></nav>
+          <nav class="topnav" aria-label="Simulators"><a class="badge" href="${esc(other[0])}">${esc(other[1])}</a></nav>
           <div class="eyebrow">${esc(T.kicker)} / trade surveillance</div>
           <h1>${esc(T.heading)}</h1>
           <p class="dek">${esc(T.scope)}</p>

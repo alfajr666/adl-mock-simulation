@@ -1,5 +1,5 @@
 {
-  "name": "trade-surveillance-simulator",
+  "name": "crypto-surveillance",
   "version": "1.2.1",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "test:ui": "node test/ui-smoke.cjs",
-    "//test:ui": "Serves this folder with python3 -m http.server on a free port and drives equity.html and crypto.html with Playwright (must be resolvable via require('playwright')). Screenshots go to $SURV_SHOTS or ./.scratch/ui-shots. Not part of npm test.",
+    "//test:ui": "Serves this folder with python3 -m http.server on a free port and drives index.html with Playwright (must be resolvable via require('playwright')). Screenshots go to $SURV_SHOTS or ./.scratch/ui-shots. Not part of npm test.",
     "seeds": "node scripts/seeds.mjs"
   }
 }
