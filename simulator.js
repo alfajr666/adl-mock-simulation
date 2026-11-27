@@ -7,7 +7,7 @@
  * values never affect ranking or settlement.
  */
 
-const MODEL_VERSION = 'adl-model-1.0.1';
+const MODEL_VERSION = 'adl-model-1.0.2';
 
 function gcd(a, b) {
   a = a < 0n ? -a : a;
@@ -231,7 +231,9 @@ function matchPositions(run, counterpartyId, quantity, settlementPrice, type) {
     `${type === 'MARKET' ? 'Market settlement' : 'ADL settlement'} at ${plainNumber(settlementPrice)}.`, [
       { account: defaultPos.id, cashDelta: defaultDelta.json() },
       { account: counterparty.id, cashDelta: counterDelta.json() },
-      { account: 'clearing', cashDelta: adjustment.neg().json(), markRelativeAdjustment: adjustment.json() },
+      // The clearing leg offsets both realized-PnL postings so the event balances.
+      // The mark-relative adjustment is a memo comparison, never posted as cash.
+      { account: 'clearing', cashDelta: defaultDelta.add(counterDelta).neg().json(), markRelativeAdjustment: adjustment.json() },
     ]);
   if (type === 'ADL') run.adlAdjustment = run.adlAdjustment.add(adjustment);
   return adjustment;

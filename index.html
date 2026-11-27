@@ -334,7 +334,7 @@
     }
 
     function renderPositions(model) {
-      $('positions-body').innerHTML = model.positions.map((pos) => `<tr data-id="${escapeHtml(pos.id)}"><td>${escapeHtml(pos.label)}</td><td class="${pos.side === 'LONG' ? 'side-long' : 'side-short'}">${pos.side}</td><td>${qty(pos.quantity)}</td><td>${money(pos.entry)}</td><td>${money(pos.cash)}</td><td class="${Number(pos.pnl) >= 0 ? 'positive' : 'negative'}">${money(pos.pnl)}</td><td class="${Number(pos.equity) >= 0 ? 'positive' : 'negative'}">${money(pos.equity)}</td><td><span class="status ${escapeHtml(pos.status)}">${escapeHtml(pos.status)}</span></td></tr>`).join('');
+      $('positions-body').innerHTML = model.positions.map((pos) => `<tr data-id="${escapeHtml(pos.id)}" tabindex="0" aria-label="Inspect ${escapeHtml(pos.label)}"><td>${escapeHtml(pos.label)}</td><td class="${pos.side === 'LONG' ? 'side-long' : 'side-short'}">${pos.side}</td><td>${qty(pos.quantity)}</td><td>${money(pos.entry)}</td><td>${money(pos.cash)}</td><td class="${Number(pos.pnl) >= 0 ? 'positive' : 'negative'}">${money(pos.pnl)}</td><td class="${Number(pos.equity) >= 0 ? 'positive' : 'negative'}">${money(pos.equity)}</td><td><span class="status ${escapeHtml(pos.status)}">${escapeHtml(pos.status)}</span></td></tr>`).join('');
     }
 
     function renderQueue(model) {
@@ -352,13 +352,13 @@
       $('queue-context').textContent = queueContext[model.stage] || 'Model scope boundary';
       if (!queueReady) {
         if (model.stage === 'MARKET_SETTLED' && model.queue.length) {
-          $('queue-body').innerHTML = model.queue.map((candidate) => `<tr data-id="${escapeHtml(candidate.id)}"><td>—</td><td>${escapeHtml(candidate.label)}</td><td>${candidate.score ?? '—'}</td><td>${candidate.leverage ?? '—'}×</td><td>${money(candidate.equity)}</td><td>Pending freeze</td></tr>`).join('');
+          $('queue-body').innerHTML = model.queue.map((candidate) => `<tr data-id="${escapeHtml(candidate.id)}" tabindex="0" aria-label="Inspect ${escapeHtml(candidate.label)}"><td>—</td><td>${escapeHtml(candidate.label)}</td><td>${candidate.score ?? '—'}</td><td>${candidate.leverage ?? '—'}×</td><td>${money(candidate.equity)}</td><td>Pending freeze</td></tr>`).join('');
         } else {
           $('queue-body').innerHTML = `<tr><td colspan="6" class="muted">${queueContext[model.stage] || 'Queue is not available at this step.'}.</td></tr>`;
         }
         return;
       }
-      $('queue-body').innerHTML = model.queue.length ? model.queue.map((candidate) => `<tr data-id="${escapeHtml(candidate.id)}"><td>#${candidate.rank}</td><td>${escapeHtml(candidate.label)}</td><td>${candidate.score ?? '—'}</td><td>${candidate.leverage ?? '—'}×</td><td>${money(candidate.equity)}</td><td>${candidate.quantity === '0.000000' ? 'Matched' : 'Eligible'}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">No eligible simulated accounts remain.</td></tr>';
+      $('queue-body').innerHTML = model.queue.length ? model.queue.map((candidate) => `<tr data-id="${escapeHtml(candidate.id)}" tabindex="0" aria-label="Inspect ${escapeHtml(candidate.label)}"><td>#${candidate.rank}</td><td>${escapeHtml(candidate.label)}</td><td>${candidate.score ?? '—'}</td><td>${candidate.leverage ?? '—'}×</td><td>${money(candidate.equity)}</td><td>${candidate.quantity === '0.000000' ? 'Matched' : 'Eligible'}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">No eligible simulated accounts remain.</td></tr>';
     }
 
     function renderInspector(model) {
@@ -432,6 +432,16 @@
     $('export-button').addEventListener('click', exportRun);
     $('positions-body').addEventListener('click', (event) => { const row = event.target.closest('tr[data-id]'); if (row) { selectedId = row.dataset.id; render(); } });
     $('queue-body').addEventListener('click', (event) => { const row = event.target.closest('tr[data-id]'); if (row) { selectedId = row.dataset.id; render(); } });
+    for (const bodyId of ['positions-body', 'queue-body']) {
+      $(bodyId).addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const row = event.target.closest('tr[data-id]');
+        if (!row) return;
+        event.preventDefault();
+        selectedId = row.dataset.id; render();
+        $(bodyId).querySelector(`tr[data-id="${CSS.escape(selectedId)}"]`)?.focus();
+      });
+    }
     render();
     document.documentElement.dataset.adlReady = 'true';
   </script>
