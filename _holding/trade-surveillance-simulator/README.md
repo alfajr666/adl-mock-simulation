@@ -70,7 +70,7 @@ Measured over seeds 1–100 at default settings (equity / crypto):
 | Strict linkage: both found | 2 of 100 | 16 of 100 |
 | Loose linkage: both found | 0 of 100 | 2 of 100 |
 | Loose linkage: largest group, mean | 48.8 accounts | 35.0 accounts |
-| Loose linkage: falsely linked pairs, mean | 771 | 393 |
+| Loose linkage: pairs of honest accounts sharing a group, mean (includes the designed honest groups) | 771 | 393 |
 
 Read these as how the rules react to a designed situation, not as detection performance.
 

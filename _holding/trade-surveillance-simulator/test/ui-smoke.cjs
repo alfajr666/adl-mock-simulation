@@ -260,7 +260,7 @@ async function runPage(browser, base, ENG, LINKS, cfg, vpName) {
   await page.selectOption('#explorer-param', 'linkagePolicy');
   check(await page.locator('#sweep-host svg').count() === 1 && await page.locator('#linkage-effects tbody tr').count() === 3, `${tag}: linkage sweep shows largest cluster and honest pairs merged for three policies`);
   const eff = await page.locator('#linkage-effects').innerText();
-  check(/Found, accounts named/i.test(eff) && /Found, diluted/i.test(eff) && /Price move flagged, no accounts named/i.test(eff) && /Unrelated cases/i.test(eff) && /Largest group/i.test(eff) && /False-linked pairs/i.test(eff) && /Accounts named per matching alert/i.test(eff), `${tag}: linkage effects table has clean and diluted finds, unrelated cases, largest cluster, false-linked pairs and accounts per matching alert`);
+  check(/Found, accounts named/i.test(eff) && /Found, diluted/i.test(eff) && /Price move flagged, no accounts named/i.test(eff) && /Unrelated cases/i.test(eff) && /Largest group/i.test(eff) && /Honest pairs sharing a group/i.test(eff) && /Accounts named per matching alert/i.test(eff), `${tag}: linkage effects table has clean and diluted finds, unrelated cases, largest cluster, honest pairs sharing a group and accounts per matching alert`);
   check(await overflow(page) <= 0, `${tag}: no horizontal overflow after unlock (${await overflow(page)}px)`);
 
   // export
