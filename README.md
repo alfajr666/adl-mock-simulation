@@ -51,7 +51,7 @@ Run the deterministic financial fixtures with:
 npm test
 ```
 
-The tests cover the insurance waterfall, long/short symmetry, policy comparison, unresolved capacity, replay determinism, and the healthy-account guard. The specification and acceptance matrix live in Delomite at `docs/adl-simulator/`.
+The tests cover the insurance waterfall, long/short symmetry, policy comparison, unresolved capacity, replay determinism, the healthy-account guard, the frozen queue, and per-event ledger balance (every posting set sums to zero, with an explicit clearing leg). The specification and acceptance matrix live in Delomite at `docs/adl-simulator/`.
 
 ## Files
 

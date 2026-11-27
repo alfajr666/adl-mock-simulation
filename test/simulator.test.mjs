@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { advance, comparePolicies, createRun, runToEnd, viewModel } from '../simulator.js';
+import { advance, comparePolicies, createRun, PRESETS, Rat, runToEnd, viewModel } from '../simulator.js';
 
 function final(id, policy) {
   return viewModel(runToEnd(createRun(id, policy)));
@@ -89,4 +89,23 @@ test('settlement uses the frozen queue rather than recalculating the policy rank
   advance(run);
 
   assert.equal(viewModel(run).positions.find((p) => p.id === 'A').quantity, '0.000000');
+});
+
+test('every ledger event balances and clearing equals remaining unrealized PnL', () => {
+  const zero = Rat.from(0);
+  const rat = (value) => new Rat(BigInt(value.n), BigInt(value.d));
+  for (const presetId of Object.keys(PRESETS)) {
+    for (const policy of ['reference', 'leverage']) {
+      const run = runToEnd(createRun(presetId, policy));
+      let clearing = zero;
+      for (const event of run.events) {
+        if (!event.postings.length) continue;
+        const sum = event.postings.reduce((total, posting) => total.add(rat(posting.cashDelta)), zero);
+        assert.equal(sum.cmp(zero), 0, `${presetId}/${policy} event ${event.id} (${event.type}) does not balance`);
+        for (const posting of event.postings) if (posting.account === 'clearing') clearing = clearing.add(rat(posting.cashDelta));
+      }
+      const unrealized = run.positions.reduce((total, p) => total.add(run.views[p.id].pnl), zero);
+      assert.equal(clearing.cmp(unrealized), 0, `${presetId}/${policy} clearing control balance`);
+    }
+  }
 });
